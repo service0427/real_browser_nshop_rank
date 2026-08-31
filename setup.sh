@@ -47,11 +47,11 @@ sudo apt-get install -y \
     unzip \
     libnss3 \
     libgbm1 \
-    $ASOUND_PKG \
-    fonts-nanum \
-    fonts-nanum-coding \
-    fonts-nanum-extra \
-    fonts-noto-cjk
+    $ASOUND_PKG
+
+# 한글 폰트 패키지 설치 (OS 릴리즈별 가용 폰트 자동 적용)
+sudo apt-get install -y fonts-nanum fonts-noto-cjk 2>/dev/null || true
+sudo apt-get install -y fonts-nanum-coding fonts-nanum-extra 2>/dev/null || true
 
 # 2. 구글 공식 Chrome 브라우저 설치 확인 및 설치
 echo -e "\n${BLUE}🌐 [2/6] Google Chrome 브라우저 설치 확인 중...${NC}"
