@@ -86,7 +86,7 @@ async def crawl_shopping_rank_async(
 
             # 4. CDP 세션 및 에뮬레이션 주입
             cdp_ctrl = CDPController(page)
-            await cdp_ctrl.setup_session(port=port)
+            await cdp_ctrl.setup_session()
 
             # 5. 모바일 통합검색 진입
             await DOMNavigator.navigate_to_search(page, keyword)

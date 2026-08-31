@@ -15,35 +15,7 @@ SHARED_CACHE_DIR = os.path.join(BASE_DIR, "services", "runtime", "browser_cache"
 
 
 class BrowserProcessManager:
-    """Chrome 브라우저 프로세스 실행 및 윈도우 배치 관리자"""
-
-    @staticmethod
-    def calculate_window_layout(port: int, max_threads: int = 8) -> Tuple[int, int, int, int]:
-        """
-        우분투 데스크톱 GUI 환경(좌측 시작표시줄 Dock ~75px, 상단 패널 ~35px)에 맞춘 4x2 그리드 타일링 배치.
-        1920x1080 Full HD 및 다양한 해상도에서 8개 창이 서로 겹치지 않고 정렬되도록 계산.
-        반환값: (win_w, win_h, win_x, win_y)
-        """
-        # 우분투 좌측 독(Dock/시작표시줄) 및 상단 패널 오프셋 마진
-        dock_offset_x = 75   # 좌측 시작표시줄 여백
-        panel_offset_y = 35  # 상단 패널 여백
-        
-        # 4열 x 2행 배치 규격 (스크롤바 및 브라우저 프레임 여유폭 포함)
-        win_w = 450
-        win_h = 500
-        gap_x = 10
-        gap_y = 12
-
-        # 9201 -> worker_idx 0, 9202 -> worker_idx 1 ...
-        worker_idx = max(0, port - 9201) if port >= 9201 else 0
-
-        col = worker_idx % 4  # 0, 1, 2, 3 (4열)
-        row = worker_idx // 4 # 0, 1       (2행)
-
-        win_x = dock_offset_x + (col * (win_w + gap_x))
-        win_y = panel_offset_y + (row * (win_h + gap_y))
-
-        return win_w, win_h, win_x, win_y
+    """Chrome 브라우저 프로세스 실행 및 생명주기 관리자"""
 
     @classmethod
     def launch(
@@ -54,7 +26,6 @@ class BrowserProcessManager:
         disk_cache_dir: Optional[str] = None
     ) -> subprocess.Popen:
         """Chrome 브라우저 프로세스를 실행하고 Popen 인스턴스 반환"""
-        win_w, win_h, win_x, win_y = cls.calculate_window_layout(port)
         cache_dir = disk_cache_dir or SHARED_CACHE_DIR
         os.makedirs(cache_dir, exist_ok=True)
 
@@ -70,9 +41,7 @@ class BrowserProcessManager:
             "--no-default-browser-check",
             "--disable-session-crashed-bubble",
             "--hide-crash-restore-bubble",
-            "--disable-infobars",
-            f"--window-size={win_w},{win_h}",
-            f"--window-position={win_x},{win_y}"
+            "--disable-infobars"
         ]
 
         if headless:

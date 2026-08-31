@@ -38,8 +38,8 @@ class CDPController:
             "deviceScaleFactor": 2.0
         }
 
-    async def setup_session(self, port: Optional[int] = None) -> CDPSession:
-        """CDP 세션 생성 및 에뮬레이션 주입 + 4x2 그리드 창 위치/크기 강제 적용"""
+    async def setup_session(self) -> CDPSession:
+        """CDP 세션 생성 및 모바일 에뮬레이션 주입"""
         self.cdp_session = await self.page.context.new_cdp_session(self.page)
         
         # 1. 네트워크 트래픽 리스너 등록
@@ -83,26 +83,6 @@ class CDPController:
                 "mobile": True
             }
         })
-
-        # 4. OS 윈도우 창 위치 및 크기 강제 재배치 (우분투 계단식 캐스케이딩 무력화)
-        if port:
-            try:
-                from services.crawler.browser_process import BrowserProcessManager
-                win_w, win_h, win_x, win_y = BrowserProcessManager.calculate_window_layout(port)
-                win_info = await self.cdp_session.send("Browser.getWindowForTarget")
-                if win_info and "windowId" in win_info:
-                    await self.cdp_session.send("Browser.setWindowBounds", {
-                        "windowId": win_info["windowId"],
-                        "bounds": {
-                            "left": win_x,
-                            "top": win_y,
-                            "width": win_w,
-                            "height": win_h,
-                            "windowState": "normal"
-                        }
-                    })
-            except Exception as e:
-                logger.debug(f"윈도우 바운드 강제 배치 예외: {e}")
 
         return self.cdp_session
 
