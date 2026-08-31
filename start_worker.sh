@@ -20,6 +20,11 @@ export DISPLAY="${DISPLAY:-:0}"
 export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}"
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 
+# 24시간 화면 켜짐 유지 (화면 꺼짐 및 스크린세이버 방지)
+xset s off -dpms 2>/dev/null || true
+xset s noblank 2>/dev/null || true
+gsettings set org.gnome.desktop.session idle-delay 0 2>/dev/null || true
+
 # 기존 포트 및 좀비 크롬 정리
 fuser -k 9201/tcp 9202/tcp 9203/tcp 9204/tcp 9205/tcp 9206/tcp 9207/tcp 9208/tcp 2>/dev/null || true
 pkill -f "/usr/bin/google-chrome.*remote-debugging-port" 2>/dev/null || true

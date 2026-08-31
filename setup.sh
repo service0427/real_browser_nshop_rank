@@ -87,8 +87,29 @@ echo -e "${GREEN}  ✔ Playwright 브라우저 엔진 준비 완료${NC}"
 echo -e "\n${BLUE}📁 [5/6] 런타임 캐시 및 프로필 풀 디렉토리 생성 중...${NC}"
 mkdir -p services/runtime/{profiles,master_profile,keyword_cache,browser_cache,logs}
 
-# 6. 실행 권한 부여
-echo -e "\n${BLUE}🔑 [6/6] 실행 스크립트 권한 설정 중...${NC}"
+# 6. 우분투 GUI 절전모드, 화면 꺼짐, 스크린세이버 및 잠금 완전 비활성화
+echo -e "\n${BLUE}🖥️ [6/7] 우분투 GUI 화면 꺼짐(Blanking), 절전모드, 잠금화면 완전 비활성화 중...${NC}"
+
+# GNOME 데스크톱 전원 및 화면 잠금 설정 무력화
+gsettings set org.gnome.desktop.session idle-delay 0 2>/dev/null || true
+gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-ac-type 'nothing' 2>/dev/null || true
+gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-ac-timeout 0 2>/dev/null || true
+gsettings set org.gnome.settings-daemon.plugins.power idle-dim false 2>/dev/null || true
+gsettings set org.gnome.desktop.screensaver lock-enabled false 2>/dev/null || true
+gsettings set org.gnome.desktop.screensaver idle-activation-enabled false 2>/dev/null || true
+gsettings set org.gnome.desktop.lockdown disable-lock-screen true 2>/dev/null || true
+
+# OS 레벨 시스템 절전(Sleep/Suspend/Hibernate) 마스킹
+sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target 2>/dev/null || true
+
+# X11 디스플레이 전원 관리(DPMS) 및 블랭킹 비활성화
+xset s off 2>/dev/null || true
+xset -dpms 2>/dev/null || true
+xset s noblank 2>/dev/null || true
+echo -e "${GREEN}  ✔ 24시간 상시 가동을 위한 GUI 화면 켜짐 유지 설정 완료${NC}"
+
+# 7. 실행 권한 부여
+echo -e "\n${BLUE}🔑 [7/7] 실행 스크립트 권한 설정 중...${NC}"
 chmod +x setup.sh 2>/dev/null || true
 chmod +x start_worker.sh 2>/dev/null || true
 chmod +x main.py 2>/dev/null || true
