@@ -45,8 +45,38 @@ class ClusterSupervisor:
         self.is_running: bool = True
         self.lock = asyncio.Lock()
         
+        # 서킷 브레이커 10분 자동 쿨다운 제어
+        self.cooldown_sec = 600
+        self.in_cooldown = False
+        self.cooldown_event = asyncio.Event()
+        self.cooldown_event.set()
+
         self.log_dir = os.path.join(BASE_DIR, "services", "runtime", "logs")
         os.makedirs(self.log_dir, exist_ok=True)
+
+    async def trigger_circuit_breaker_cooldown(self):
+        """모든 워커가 동시 차단되었을 때 10분(600초)간 IP 보호 쿨다운 후 자동 재개"""
+        logger.critical("=" * 80)
+        logger.critical("🚨 [서킷 브레이커 발동] 모든 워커에서 네이버 일시 차단을 감지했습니다!")
+        logger.critical("🛡️ IP 보호 및 세션 정화를 위해 10분(600초)간 안전 쿨다운에 들어갑니다.")
+        logger.critical("⏰ 10분 대기 후 자동으로 크롤링이 재개됩니다...")
+        logger.critical("=" * 80)
+
+        await self.write_status(is_finished=False, finish_reason="CIRCUIT_BREAKER_10MIN_COOLDOWN")
+
+        for remaining in range(self.cooldown_sec, 0, -60):
+            mins = remaining // 60
+            logger.info(f"⏳ [서킷 브레이커 쿨다운 중] 자동 재개까지 약 {mins}분 남음 ({remaining}초)...")
+            await asyncio.sleep(min(60, remaining))
+
+        async with self.lock:
+            self.worker_last_status = {w: "IDLE" for w in range(1, self.max_threads + 1)}
+            self.in_cooldown = False
+            self.cooldown_event.set()
+
+        logger.info("=" * 80)
+        logger.info("🟢 [서킷 브레이커 해제] 10분 쿨다운 완료! 워커 클러스터가 자동으로 탐색을 재개합니다.")
+        logger.info("=" * 80)
 
     async def write_status(self, is_finished: bool = False, finish_reason: str = ""):
         """실시간 진행 상태를 services/runtime/logs/drain_status.json 에 기록"""
@@ -101,6 +131,9 @@ class ClusterSupervisor:
         logger.info(f"🚀 [Worker #{worker_id}] 가동 준비 완료 | Port: {port} | 프로필: profile_{start_idx}~{start_idx+49}")
 
         while self.is_running:
+            # 쿨다운 중일 경우 대기
+            await self.cooldown_event.wait()
+
             res = await TaskRunner.process_task(
                 worker_id=worker_id,
                 port=port,
@@ -155,14 +188,14 @@ class ClusterSupervisor:
             # 상태 JSON 갱신
             await self.write_status()
 
-            # [안전 가드] 모든 워커가 동시에 차단(BLOCKED) 상태인지 검사
+            # [안전 가드] 모든 워커가 동시에 차단(BLOCKED) 상태인지 검사 -> 10분 쿨다운 자동 진입
             async with self.lock:
                 active_statuses = list(self.worker_last_status.values())
                 if len(active_statuses) >= self.max_threads and all(s == "BLOCKED" for s in active_statuses):
-                    logger.critical("🚨 [비상 정지] 모든 워커가 동시에 네이버 차단을 감지했습니다! IP 보호를 위해 자동 중지합니다.")
-                    self.is_running = False
-                    await self.write_status(is_finished=True, finish_reason="ALL_WORKERS_SIMULTANEOUSLY_BLOCKED")
-                    break
+                    if not self.in_cooldown:
+                        self.in_cooldown = True
+                        self.cooldown_event.clear()
+                        asyncio.create_task(self.trigger_circuit_breaker_cooldown())
 
             await asyncio.sleep(0.5)
 
