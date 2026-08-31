@@ -27,6 +27,13 @@ cd "$SCRIPT_DIR"
 # 1. 시스템 필수 패키지 및 한글 폰트 설치
 echo -e "${BLUE}📦 [1/6] 우분투 시스템 패키지 및 네이버 렌더링 한글 폰트 설치 중...${NC}"
 sudo apt-get update -y
+
+# Ubuntu 버전에 따른 라이브러리 패키지 호환 처리 (Ubuntu 20.04/22.04: libasound2, Ubuntu 24.04: libasound2t64)
+ASOUND_PKG="libasound2"
+if apt-cache show libasound2t64 >/dev/null 2>&1; then
+    ASOUND_PKG="libasound2t64"
+fi
+
 sudo apt-get install -y \
     python3 \
     python3-venv \
@@ -40,7 +47,7 @@ sudo apt-get install -y \
     unzip \
     libnss3 \
     libgbm1 \
-    libasound2t64 \
+    $ASOUND_PKG \
     fonts-nanum \
     fonts-nanum-coding \
     fonts-nanum-extra \
