@@ -1,201 +1,191 @@
-# Naver Shopping Pure Organic Rank Search Engine
+# 🚀 TechB Naver Shopping Pure Organic Rank Engine
 
-네이버 쇼핑의 순수 비광고(Organic) 실시간 상품 순위를 초고속으로 탐색하고, 최대 500위(13개 페이지)까지 대량 수집할 수 있는 고성능 랭킹 크롤러 및 순위 탐색 서비스입니다.
+네이버 쇼핑의 순수 비광고(Organic) 실시간 상품 순위를 초고속으로 탐색하고, 분산 작업 큐(Task Queue Server)와 연동하여 병렬로 랭킹을 수집/반환하는 **고성능 분산 멀티 워커 클러스터 시스템**입니다.
 
-네이버의 WTM 보안 게이트웨이(HTTP 418 차단, nCaptcha, 로그인 리다이렉트)를 완벽하게 우회하며, **패킷급 트래픽 최적화(CDP 미디어 차단)**를 통해 초저대역폭 및 1~2초대 초고속 순위 판별을 지원합니다.
+네이버의 WTM 보안 게이트웨이(HTTP 418, nCaptcha, 로그인 강제 리다이렉트)를 100% 우회하며, **CDP 모바일 에뮬레이션 + 실제 DOM 복제(Clone) 물리 클릭 페이징 + SSR(`__NEXT_DATA__`) 안전 추출** 기술을 적용하여 1~10페이지(최대 400위)까지 100%의 감지율을 제공합니다.
 
 ---
 
-## 🚀 하이브리드 연계 탐색 전략 (Cascade Architecture)
-
-시스템은 요청 상황에 따라 가장 효율적이고 빠른 파이프라인을 자동 선택합니다.
+## 🌟 핵심 아키텍처 & 주요 기능
 
 ```mermaid
 flowchart TD
-    Start([실행 시작]) --> CheckTarget{--target 입력 여부}
-    
-    CheckTarget -- "타겟 있음 (--target)" --> Stage1[1단계: curl_cffi 패킷 고속 탐색\n(1~72위, 0.5초 소요)]
-    Stage1 --> TargetFound{1~72위 내 발견?}
-    
-    TargetFound -- "발견 (YES)" --> ReturnRank([즉시 순위 리턴 및 종료\n(0.8초 완료, 브라우저 미구동)])
-    TargetFound -- "미발견 (NO)" --> Stage2[2단계: Nodriver 심층 탐색 전환\n(미디어 차단 + 500위까지 탐색)]
-    Stage2 --> DeepFound{500위 내 발견?}
-    DeepFound -- "발견" --> ReturnDeepRank([심층 순위 리턴 및 종료])
-    DeepFound -- "미발견" --> ReturnNotFound([500위 밖 판정 및 종료])
+    subgraph Server ["🌐 분산 태스크 큐 서버 (114.207.112.172:9003)"]
+        Queue[작업 대기 큐\nGET /api/v1/task]
+        Return[결과 수신/저장\nPOST /api/v1/task/return]
+    end
 
-    CheckTarget -- "타겟 없음 (생략)" --> FullNodriver[Nodriver 대량 수집\n(500위+ 전수 수집 및 JSON/CSV/TXT 리포트 저장)]
-    FullNodriver --> SaveReports([3종 리포트 생성 및 완료])
+    subgraph Cluster ["⚙️ 클러스터 슈퍼바이저 (Supervisor: 4~8 Threads)"]
+        Requeue{비행 중인 키워드?\nIn-Flight Requeue}
+        CacheCheck{키워드 캐시 확인\nKeyword Cache}
+        Standby[10분 유휴 스마트 대기\nSmart Standby]
+    end
+
+    subgraph Crawler ["🌐 모듈형 CDP 크롤러 (Modular Crawler)"]
+        CDP[CDP 세션 & 430x780 뷰포트]
+        DOM[ackey 통검 진입 -> 가격비교 클릭 -> DOM 복제 물리 페이징]
+        SSR[__NEXT_DATA__ 파싱 & 타겟 ID 매칭]
+    end
+
+    Queue -->|1. 태스크 임대| Cluster
+    Cluster -->|동일 키워드 즉시 반환| Queue
+    Cluster -->|2. 캐시 조회| CacheCheck
+    CacheCheck -->|Cache HIT 0.0001초| Return
+    CacheCheck -->|Cache MISS| Crawler
+    Crawler -->|3. 브라우저 탐색 & 캐시 저장| Return
 ```
 
-1. **타겟 코드 입력 시 (`--target <ID>`)**:
-   - **1단계 (0.5s Fast Probe)**: `curl_cffi` 기반 순수 패킷으로 1~72위를 **0.5~0.8초 만에 초고속 검증**.
-   - **발견 시**: 브라우저를 띄우지 않고 즉시 순위(#5)를 리턴하며 **0.8초 만에 종료**.
-   - **미발견 시**: 즉시 **2단계 Nodriver(미디어 차단)**로 자동 전환하여 73위부터 500위까지 심층 탐색 후 발견 즉시 종료.
-2. **타겟 코드 생략 시 (Full Scrape Mode)**:
-   - **Nodriver**로 1위부터 500위+까지 순차 수집(500개 도달 시 해당 페이지 완료 후 자동 중단)하고 JSON, CSV(Excel BOM), TXT 보고서를 생성합니다.
+1. **Non-blocking Fast Requeue (비차단 0초 즉시 재할당)**:
+   - 여러 워커가 동시에 동일 키워드를 임대받았을 경우, 브라우저 대기 없이 **0.001초 만에 서버 큐 맨 뒤로 반납** 후 다른 작업을 즉시 수행합니다.
+   - 나중에 큐가 돌아왔을 때는 이미 먼저 완료된 워커의 **메모리/디스크 캐시(0.0001초)로 즉시 응답**합니다.
+2. **10분 유휴 대기 모드 (Smart Standby)**:
+   - 서버 작업 큐에 잔여 태스크가 없을 경우(`total_remaining_tasks=0`), 크롬을 닫고 600초(10분) 동안 유휴 대기하여 서버 부하 및 로컬 리소스를 최소화합니다.
+3. **8-Thread 4x2 그리드 화면 정렬**:
+   - 모니터 화면에 최대 8개 브라우저 창(`460x880`)이 4열 x 2행으로 겹치지 않고 정렬되어 실시간 모니터링이 가능합니다.
+4. **DOM 복제(Clone) 마우스 물리 클릭 페이징**:
+   - 네이버 모바일 쇼핑 하단 페이지 번호 버튼을 상단으로 원형 복제하여 실제 마우스 물리 좌표 클릭을 수행, 차단 없이 1~10페이지를 연속 이동합니다.
+5. **독립 프로필 풀 & 자가치유 (Self-Healing)**:
+   - 워커별 독립 프로필 50개(총 200~400개)를 순환 사용하며, 비정상 감지 시 템플릿 프로필에서 즉시 자동 복원합니다.
 
 ---
 
-## 📁 디렉토리 구조 (Project Structure)
+## 📁 프로젝트 구조 (Clean Architecture)
 
 ```text
-D:\dev\nshop_rank\
-├── main.py                        # [통합 진입점] CLI 및 파이썬 API (search_ranks)
-├── requirements.txt               # 필수 라이브러리 의존성
-├── README.md                      # 프로젝트 사용 가이드 및 아키텍처 문서
-├── output\                        # 수집 리포트 (JSON, CSV, TXT) 자동 저장 디렉토리
-└── lib\
-    ├── browser.py                 # 스텔스 브라우저 매니저 (모바일 에뮬레이션, CDP 트래픽 차단)
-    ├── mobile_nodriver_runner.py  # [핵심] 최적화된 모바일 Nodriver 순위 엔진 (타겟 즉시 반환)
-    ├── mobile_packet_ranker.py    # [패킷] curl_cffi 기반 0.5초 초고속 모바일 패킷 엔진
-    ├── pagination_service.py      # [심층] 1~13페이지 (520위) 연속 페이지네이션 및 418 모니터
-    ├── shopping_service.py        # 쇼핑 탭 전환 및 target='_self' 정제 모듈
-    ├── search_service.py          # 합성 ackey 기반 자연 검색 진입 모듈
-    ├── ackey.py                   # 네이버 자연 유입 ackey Base36 알고리즘 생성기
-    ├── nnb_generator.py           # LCS 초경량 비콘 기반 NNB/BUC 쿠키 발급기
-    ├── rank_reporter.py           # 표준 JSON, CSV (Excel BOM), TXT 리포트 생성기
-    └── logger.py                  # 표준 로깅 포맷터
+nshop_rank/
+├── README.md                     # [사용 설명서] 시스템 전체 가이드 및 API 명세
+├── requirements.txt              # 프로덕션 패키지 의존성
+├── setup.sh                      # [1-Click] 우분투 GUI 신규 서버 원클릭 자동 설치 스크립트
+├── start_worker.sh               # [1-Click] 멀티 워커 클러스터 실행기 (4/8 쓰레드)
+├── main.py                       # 통합 CLI 진입점 (단일 조회 / 워커 구동)
+│
+├── config/
+│   └── settings.py               # 서버 엔드포인트 및 전역 타임아웃/포트 설정
+│
+├── core/
+│   ├── engine/
+│   │   ├── supervisor.py         # 8-Thread 클러스터 오케스트레이터 & 서킷 브레이커
+│   │   └── task_runner.py        # 단일 워커 라이프사이클 (임대 -> Requeue -> 캐시 -> 반환)
+│   └── logger.py                 # 컬러/JSON 표준 로거
+│
+└── services/
+    ├── crawler/                  # 🌐 브라우저 크롤링 핵심 서브시스템
+    │   ├── browser_process.py    # 크롬 생명주기 및 4x2 그리드 타일링 화면 배치
+    │   ├── cdp_controller.py     # CDP 세션, 세로형(430x780) 모바일 뷰포트 & 트래픽 계측
+    │   ├── dom_navigator.py      # ackey 통검 진입, 가격비교 클릭, DOM 복제 물리 페이징
+    │   ├── data_extractor.py     # __NEXT_DATA__ 파싱, 오가닉/광고 분리, 100% 타겟 매칭
+    │   └── __init__.py           # crawl_shopping_rank_async 통합 Facade
+    ├── keyword_cache.py          # 키워드별 개별 JSON 스마트 캐시 매니저
+    ├── profile_pool.py           # 쓰레드별 50개 독립 프로필 풀 & 자가치유 매니저
+    ├── partner_worker.py         # REST API 통신 워커 클라이언트
+    └── runtime/                  # 🗄️ 런타임 저장소 (Git 추적 제외)
+        ├── profiles/             # 워커별 동적 프로필 풀
+        ├── master_profile/       # 복원용 원본 프로필 템플릿
+        ├── keyword_cache/        # 실시간 키워드별 JSON 캐시
+        ├── browser_cache/        # Chrome 공용 디스크 캐시
+        ├── logs/                 # drain_status.json 실시간 모니터링 로그
+        └── device_config.json    # Nest Hub UA/뷰포트 에뮬레이션 설정값
 ```
 
 ---
 
-## 🛠 설치 및 환경 설정 (Installation)
+## 🛠️ 신규 서버 원클릭 설치 및 배포 (`setup.sh`)
 
-- **Python 버전**: Python 3.10 이상 권장
-- **필수 패키지 설치**:
+신규 우분투 GUI 서버에서 `git clone` 후 아래 2단계 명령어로 즉시 프로덕션 환경이 구축됩니다:
 
 ```bash
-pip install -r requirements.txt
+# 1. 실행 권한 부여
+chmod +x setup.sh start_worker.sh main.py
+
+# 2. 원클릭 자동 설치 실행
+./setup.sh
+```
+
+> **자동 설치 내역**:
+> - 한글 폰트(`fonts-nanum`, `fonts-noto-cjk`) 설치 (네이버 한글 렌더링 정상화)
+> - Google Chrome 최신 안정화 버전 deb 자동 다운로드 및 설치
+> - Python 전용 가상환경(`venv`) 생성 및 필수 패키지(`playwright`, `curl_cffi`, `fastapi` 등) 설치
+> - Playwright 브라우저 커널 및 런타임 디렉토리 자동 생성
+
+---
+
+## 🚀 실행 가이드
+
+> [!NOTE]
+> 네이버의 WTM 보안 봇 탐지 정책상 Headless 모드는 차단 대상이 되므로, 본 시스템은 **우분투 데스크톱 Real GUI 화면 모드**로 작동하도록 설계되었습니다. 창은 화면에 4x2 그리드로 정렬되어 리소스 간섭 없이 구동됩니다.
+
+### 1) 멀티 워커 클러스터 실행 (`start_worker.sh`)
+
+```bash
+# 기본 4개 쓰레드 GUI 모드 실행 (화면에 4개 창 분할 팝업)
+./start_worker.sh 4
+
+# 고성능 8개 쓰레드 GUI 모드 실행 (화면에 8개 창 4x2 그리드 자동 정렬)
+./start_worker.sh 8
+```
+
+### 2) CLI 단일 키워드 순위 직접 조회 (`main.py shop`)
+
+```bash
+# 특정 상품 타겟 순위 조회 (1~10페이지 탐색, 발견 즉시 조기 종료)
+python3 main.py shop --keyword "노트북" --target 52631236642
+
+# 10페이지(400개) 전수 수집
+python3 main.py shop --keyword "무선이어폰" --maxpage 10
 ```
 
 ---
 
-## 💻 사용법 (Usage)
+## 📡 분산 태스크 큐 서버 연동 규격
 
-### 1. CLI 명령어 실행
+워커 클러스터는 중앙 작업 큐 서버(`114.207.112.172:9003`)와 아래 규격으로 통신합니다.
 
-#### ① 타겟 상품 순위 즉시 탐색 (타겟 코드 입력 모드)
-특정 상품의 ID(`nvMid` 또는 스마트스토어 상품 ID)를 지정하면, 해당 상품을 찾는 즉시 순위를 출력하고 종료합니다.
-
-```bash
-python main.py --keyword 노트북 --target 52631236642
-```
-```text
-================================================================================
-RANK SEARCH EXECUTION RESULT:
-================================================================================
-Status           : SUCCESS
-Keyword          : '노트북'
-Mode             : MOBILE
-Total Extracted  : 5 organic products
-
-★ Target Code      : 52631236642
-★ Target Found     : True
-★ Target Rank      : #5
-★ Product Title    : 삼성전자 갤럭시북4 노트북 NT750XGR-A51A i5 16GB, 256GB
-★ Price            : 1,174,990원
-★ nvMid            : 52631236642
-================================================================================
-```
-
-#### ② 500위 대량 순위 수집 (타겟 생략 모드)
-타겟 코드를 생략하면 1페이지부터 13페이지(기본 500위+)까지 전수 수집하여 3종 보고서를 저장합니다.
-
-```bash
-# 기본 모바일 모드로 500위 수집
-python main.py --keyword 노트북 --maxpage 13
-
-# 백그라운드(Headless) 모드로 수집
-python main.py --keyword 무선이어폰 --headless
-```
-
-#### ③ 0.5초 초고속 순수 패킷 모드 (`--mode packet`)
-상위 70위 이내 상품 탐색 시 브라우저 없이 초고속으로 결과를 확인합니다.
-
-```bash
-python main.py --keyword 노트북 --target 52631236642 --mode packet
-```
-
----
-
-### 2. 파이썬 프로그램 및 API 연동 (Programmatic Usage)
-
-향후 **FastAPI / Flask / Django** 등 웹 서비스 백엔드에 즉시 연동할 수 있는 표준 함수 인터페이스를 제공합니다.
-
-```python
-from main import search_ranks
-
-# 1. 특정 상품 순위 탐색 (타겟 발견 시 즉시 반환)
-result = search_ranks(
-    keyword="노트북",
-    target_code="52631236642",
-    mode="mobile",      # 'mobile' 또는 'packet'
-    headless=True
-)
-
-if result["targetFound"]:
-    print(f"발견 순위: {result['targetRank']}위")
-    print(f"상품명: {result['targetProduct']['productTitle']}")
-    print(f"가격: {result['targetProduct']['price']}원")
-
-# 2. 대량 순위 수집 (13개 페이지 / 500위)
-result_full = search_ranks(
-    keyword="노트북",
-    max_pages=13,
-    headless=True
-)
-print(f"수집된 총 순수 상품 수: {result_full['totalExtracted']}개")
-print(f"보고서 경로: {result_full['reports']['json']}")
-```
-
----
-
-## 📊 반환 데이터 명세 (JSON Schema)
-
-`search_ranks()` 함수 및 CLI 실행 결과는 다음과 같은 표준 구조를 반환합니다.
-
+### 1. 작업 임대 요청 (`GET /api/v1/task`)
+- **URL**: `GET http://114.207.112.172:9003/api/v1/task?service=shop&lease_seconds=300`
+- **응답 예시**:
 ```json
 {
-  "status": "SUCCESS",
-  "keyword": "노트북",
-  "targetCode": "52631236642",
-  "targetFound": true,
-  "targetRank": 5,
-  "targetProduct": {
-    "rank": 5,
-    "page": 1,
-    "pageRank": 5,
-    "id": "52631236642",
-    "nvMid": "52631236642",
-    "productTitle": "삼성전자 갤럭시북4 노트북 NT750XGR-A51A i5 16GB, 256GB",
-    "mallName": "N/A",
-    "price": 1174990,
-    "reviewCount": 1842,
-    "scoreInfo": 4.9,
-    "imageUrl": "https://shopping-phinf.pstatic.net/...",
-    "productUrl": "https://cr.shopping.naver.com/..."
-  },
-  "totalExtracted": 520,
-  "totalPagesReached": 13,
-  "elapsedSec": 2.05,
-  "reports": {
-    "json": "output/rank_report_노트북_mobile_nodriver.json",
-    "csv": "output/rank_report_노트북_mobile_nodriver.csv",
-    "txt": "output/rank_report_노트북_mobile_nodriver.txt"
+  "success": true,
+  "has_task": true,
+  "task_id": 60637641,
+  "service": "shop",
+  "keyword": "분리수거함",
+  "keyword_total_count": 3,
+  "keyword_remaining_count": 3,
+  "total_remaining_tasks": 3463,
+  "target": "83198421590",
+  "naver_search_url": "https://m.search.shopping.naver.com/search/all?query=분리수거함"
+}
+```
+
+### 2. 결과 반환 (`POST /api/v1/task/return`)
+- **URL**: `POST http://114.207.112.172:9003/api/v1/task/return`
+- **요청 Body 예시**:
+```json
+{
+  "task_id": 60637641,
+  "service": "shop",
+  "rank": 15,
+  "product": {
+    "productName": "리빙스마일 재활용 분리수거함 50L 푸시도어 대용량 가정용 쓰레기통",
+    "mallName": "리빙스마일",
+    "lowPrice": 19900,
+    "imageUrl": "https://shopping-phinf.pstatic.net/main_8319842/83198421590.14.jpg",
+    "reviewCount": 2600,
+    "scoreInfo": 4.73,
+    "nvMid": "83198421590",
+    "brand": "",
+    "category": "생활/건강>청소용품>휴지통>분리수거함"
   }
 }
 ```
 
 ---
 
-## ⚙️ 실행 옵션 정리 (CLI Options)
+## 📊 실시간 모니터링 (`services/runtime/logs/drain_status.json`)
 
-| 옵션 | 단축키 | 기본값 | 설명 |
-| :--- | :---: | :---: | :--- |
-| `--keyword` | `-k` | `노트북` | 검색할 네이버 쇼핑 키워드 |
-| `--target` | `-t`, `--code` | `None` | 탐색할 타겟 상품 ID (생략 시 대량 수집 모드) |
-| `--maxpage` | `-m` | `13` | 최대 수집 페이지 수 (13페이지 = ~520위) |
-| `--mode` | | `mobile` | `mobile`(모바일 Nodriver), `packet`(초고속 패킷), `pc`(데스크톱) |
-| `--headless` | | `False` | 브라우저 창을 띄우지 않고 백그라운드 실행 |
-| `--no-block-media`| | `False` | 이미지/미디어 차단 비활성화 (기본값은 패킷급 트래픽을 위해 차단 활성화) |
-| `--close` | | `0.0` | 작업 완료 후 브라우저 자동 종료 대기 시간(초) |
+워커 구동 중 실시간 진척도 및 서버 통계가 JSON 파일로 자동 기록됩니다:
+
+```bash
+cat services/runtime/logs/drain_status.json | jq .
+```

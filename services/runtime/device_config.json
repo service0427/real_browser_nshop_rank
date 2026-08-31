@@ -1,0 +1,76 @@
+{
+  "url": "https://m.search.naver.com/search.naver?sm=mtp_hty.top&where=m&query=%EB%85%B8%ED%8A%B8%EB%B6%81&ackey=n9pwop75",
+  "viewport": {
+    "innerWidth": 1024,
+    "innerHeight": 600,
+    "outerWidth": 1024,
+    "outerHeight": 600,
+    "devicePixelRatio": 2,
+    "hasTouch": false,
+    "maxTouchPoints": 1
+  },
+  "screen": {
+    "width": 1024,
+    "height": 600,
+    "availWidth": 1024,
+    "availHeight": 600,
+    "orientation": {
+      "type": "landscape-primary",
+      "angle": 90
+    }
+  },
+  "navigator": {
+    "userAgent": "Mozilla/5.0 (Linux; Android) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36 CrKey/1.54.248666",
+    "platform": "Linux x86_64",
+    "vendor": "Google Inc.",
+    "language": "ko-KR",
+    "languages": [
+      "ko-KR",
+      "ko",
+      "en-US",
+      "en"
+    ],
+    "webdriver": false
+  },
+  "clientHints": {
+    "architecture": "",
+    "bitness": "64",
+    "brands": [
+      {
+        "brand": "Not=A?Brand",
+        "version": "99"
+      },
+      {
+        "brand": "Google Chrome",
+        "version": "151"
+      },
+      {
+        "brand": "Chromium",
+        "version": "151"
+      }
+    ],
+    "formFactors": [
+      "Desktop"
+    ],
+    "fullVersionList": [
+      {
+        "brand": "Not=A?Brand",
+        "version": "99.0.0.0"
+      },
+      {
+        "brand": "Google Chrome",
+        "version": "151.0.7922.173"
+      },
+      {
+        "brand": "Chromium",
+        "version": "151.0.7922.173"
+      }
+    ],
+    "mobile": false,
+    "model": "",
+    "platform": "Android",
+    "platformVersion": "",
+    "wow64": false
+  },
+  "cookie": "page_uid=jpeZpwqoieKssiWlgAh-328058; _naver_usersession_=1i8MFyptJtORVGeAGuTeSz6t; NAC=QCwCBMBkazTz; NACT=1; NNB=Q5ILU5NIISKGU; SRT30=1788101800; SRT5=1788101800"
+}

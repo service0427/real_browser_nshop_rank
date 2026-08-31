@@ -11,13 +11,11 @@ venv/
 # Environment Variables
 .env
 
-# Data & Profiles
-data/browser_profiles/
-data/logs/
-data/
-logs/
-output/
-scratch/
+# Dynamic Runtime Data
+services/runtime/profiles/
+services/runtime/keyword_cache/
+services/runtime/browser_cache/
+services/runtime/logs/
 
 # IDE
 .idea/
