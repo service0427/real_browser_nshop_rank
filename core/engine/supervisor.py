@@ -19,14 +19,6 @@ if BASE_DIR not in sys.path:
 from core.logger import get_logger
 from services.profile_pool import ProfilePoolManager
 from services.keyword_cache import keyword_cache_mgr
-try:
-    from services.infra.ip_toggle import ip_toggle_mgr
-except ImportError:
-    try:
-        from services.ip_toggle import ip_toggle_mgr
-    except ImportError:
-        ip_toggle_mgr = None
-
 from core.engine.task_runner import TaskRunner
 
 logger = get_logger("engine.supervisor")
@@ -63,23 +55,9 @@ class ClusterSupervisor:
         os.makedirs(self.log_dir, exist_ok=True)
 
     async def trigger_circuit_breaker_cooldown(self):
-        """모든 워커가 동시 차단되었을 때 IP 토글 수행 및 10분(600초)간 안전 쿨다운 후 자동 재개"""
+        """모든 워커가 동시 차단되었을 때 10분(600초)간 IP 보호 쿨다운 후 자동 재개"""
         logger.critical("=" * 80)
         logger.critical("🚨 [서킷 브레이커 발동] 모든 워커에서 네이버 일시 차단을 감지했습니다!")
-        logger.critical("🔄 [IP 변경 절차] 상위 장비 및 MikroTik WAN IP 토글을 시도합니다...")
-        logger.critical("=" * 80)
-
-        # 1. IP 토글 수행 (백그라운드 블로킹 방지 위해 비동기 스레드 풀 실행)
-        try:
-            loop = asyncio.get_event_loop()
-            toggle_res = await loop.run_in_executor(None, ip_toggle_mgr.toggle_ip, False, 120)
-            if toggle_res.get("success"):
-                logger.info(f"🟢 [IP 변경 성공] {toggle_res.get('old_ip')} ➜ {toggle_res.get('new_ip')} (새 MAC: {toggle_res.get('new_mac')})")
-            else:
-                logger.warning(f"⚠️ [IP 변경 알림] {toggle_res.get('message', toggle_res.get('reason'))}")
-        except Exception as e:
-            logger.error(f"❌ [IP 변경 중 오류 발생]: {e}")
-
         logger.critical("🛡️ IP 보호 및 세션 정화를 위해 10분(600초)간 안전 쿨다운에 들어갑니다.")
         logger.critical("⏰ 10분 대기 후 자동으로 크롤링이 재개됩니다...")
         logger.critical("=" * 80)
