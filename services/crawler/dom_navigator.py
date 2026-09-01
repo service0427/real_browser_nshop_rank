@@ -58,56 +58,39 @@ class DOMNavigator:
     @staticmethod
     async def click_next_page(page: Page, target_page: int) -> bool:
         """
-        화면 정중앙(Center) 스크롤 정렬 후 실제 DOM 페이징 버튼 물리 마우스 클릭 수행 (1~25페이지 지원)
+        하단 페이징 영역으로 스크롤 후 원본 페이징 버튼(1~25p) 정밀 클릭 수행
         """
-        logger.info(f"👉 [{target_page}페이지 이동] DOM 페이징 버튼 탐색 및 화면 중앙 정렬 물리 클릭")
+        logger.info(f"👉 [{target_page}페이지 이동] 하단 스크롤 및 원본 페이징 버튼 정밀 클릭")
 
-        # 1. 페이징 영역이 렌더링되도록 부드러운 휠 스크롤 3회
-        for _ in range(3):
-            await page.mouse.wheel(0, 1200)
+        # 1. 페이징 영역이 렌더링되도록 하단 스크롤 3~4회
+        for _ in range(4):
+            await page.mouse.wheel(0, 1500)
             await asyncio.sleep(0.6)
 
-        # 2. 버튼 탐색 및 화면 중앙(block: center)으로 스크롤하여 정확한 물리 좌표 추출
-        btn_info = await page.evaluate("""(target) => {
-            const paginator = document.querySelector('div[class*="paginator"]');
-            if (!paginator) return { ok: false, reason: 'no_paginator' };
+        # 2. paginator 영역 내 대상 버튼 탐색
+        paginator = page.locator('div[class*="paginator_inner"], div[class*="paginator"]')
+        
+        if target_page <= 5:
+            btn = paginator.locator('a, button').filter(has_text=str(target_page)).first
+        else:
+            # 6, 11, 16, 21 등 청크 시작점은 '다음' 버튼 우선 매칭, 없으면 해당 번호
+            if (target_page - 1) % 5 == 0:
+                btn = paginator.locator('a, button').filter(has_text="다음").first
+                if await btn.count() == 0:
+                    btn = paginator.locator('a, button').filter(has_text=str(target_page)).first
+            else:
+                btn = paginator.locator('a, button').filter(has_text=str(target_page)).first
 
-            const btns = Array.from(paginator.querySelectorAll('a, button'));
-            let btn = btns.find(b => b.innerText.trim() === String(target));
-
-            // 6, 11, 16, 21페이지 등 청크 이동 시 '다음리스트' 또는 '다음' 버튼 매칭
-            if (!btn && (target % 5 === 1 || target > 5)) {
-                btn = btns.find(b => b.innerText.trim().includes('다음') || b.getAttribute('aria-label')?.includes('다음'));
-            }
-
-            if (!btn) {
-                return { ok: false, reason: 'btn_not_found', available: btns.map(b => b.innerText.trim()) };
-            }
-
-            // 버튼을 뷰포트 정중앙으로 스크롤 정렬
-            btn.scrollIntoView({ behavior: 'instant', block: 'center' });
-            const rect = btn.getBoundingClientRect();
-            return {
-                ok: true,
-                text: btn.innerText.trim(),
-                x: rect.left + rect.width / 2,
-                y: rect.top + rect.height / 2,
-                visible: rect.top >= 0 && rect.top <= window.innerHeight
-            };
-        }""", target_page)
-
-        if not btn_info or not btn_info.get("ok"):
-            logger.error(f"❌ [{target_page}페이지] 버튼 탐색 실패: {btn_info}")
+        btn_count = await btn.count()
+        if btn_count == 0:
+            logger.error(f"❌ [{target_page}페이지] 페이징 버튼을 찾을 수 없음!")
             return False
 
-        logger.info(f"   🎯 [{target_page}p 타겟] '{btn_info['text']}' 화면 정중앙 좌표 ({btn_info['x']:.1f}, {btn_info['y']:.1f}) -> 리얼 물리 클릭!")
-
-        # 3. 마우스 물리 이동 및 클릭 이벤트 발생
-        await page.mouse.move(btn_info["x"], btn_info["y"], steps=8)
-        await asyncio.sleep(0.15)
-        await page.mouse.down()
-        await asyncio.sleep(0.1)
-        await page.mouse.up()
+        # 3. 버튼이 화면에 완전히 보이도록 스크롤 후 마우스 물리 클릭
+        await btn.scroll_into_view_if_needed()
+        await asyncio.sleep(0.5)
+        await btn.click()
+        logger.info(f"   🎯 [{target_page}페이지] 버튼 클릭 성공!")
 
         # 4. 데이터 로드 대기
         await asyncio.sleep(3.0)
