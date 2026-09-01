@@ -54,33 +54,44 @@ class CDPController:
         self.cdp_session.on("Network.dataReceived", on_data_received)
         self.cdp_session.on("Network.loadingFinished", on_loading_finished)
 
-        # 2. 기기 스펙: 창 크기에 100% 핏되는 세로형 해상도 주입
-        dev_w = 430
-        dev_h = 780
+        # 2. Chrome DevTools Nest Hub 정밀 에뮬레이션 주입 (1024x600, Scale 2, Landscape)
+        vp = self.device_config.get("viewport", {})
+        dev_w = vp.get("innerWidth", 1024)
+        dev_h = vp.get("innerHeight", 600)
+        dpr = vp.get("devicePixelRatio", 2)
+        
         await self.cdp_session.send("Emulation.setDeviceMetricsOverride", {
             "width": dev_w,
             "height": dev_h,
-            "deviceScaleFactor": 2,
-            "mobile": True,
+            "deviceScaleFactor": dpr,
+            "mobile": False,
             "screenWidth": dev_w,
             "screenHeight": dev_h,
-            "screenOrientation": {"type": "portraitPrimary", "angle": 0}
+            "screenOrientation": {"type": "landscapePrimary", "angle": 0}
         })
         await self.cdp_session.send("Emulation.setTouchEmulationEnabled", {"enabled": True, "maxTouchPoints": 1})
 
-        # 3. Nest Hub 고신뢰 UserAgent 주입
+        # 3. Nest Hub 고신뢰 UserAgent & Client Hints 주입
+        nav = self.device_config.get("navigator", {})
+        ua = nav.get("userAgent", "Mozilla/5.0 (Linux; Android) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36 CrKey/1.54.248666")
+        ch = self.device_config.get("clientHints", {})
+
         await self.cdp_session.send("Emulation.setUserAgentOverride", {
-            "userAgent": "Mozilla/5.0 (Linux; Android) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36 CrKey/1.54.248666",
+            "userAgent": ua,
             "acceptLanguage": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
-            "platform": "Android",
+            "platform": "Linux x86_64",
             "userAgentMetadata": {
-                "brands": [{"brand": "Not=A?Brand", "version": "99"}, {"brand": "Google Chrome", "version": "151"}, {"brand": "Chromium", "version": "151"}],
+                "brands": ch.get("brands", [
+                    {"brand": "Not=A?Brand", "version": "99"},
+                    {"brand": "Google Chrome", "version": "151"},
+                    {"brand": "Chromium", "version": "151"}
+                ]),
                 "fullVersion": "151.0.7922.173",
                 "platform": "Android",
-                "platformVersion": "10.0.0",
-                "architecture": "arm",
-                "model": "Nest Hub",
-                "mobile": True
+                "platformVersion": "",
+                "architecture": "",
+                "model": "",
+                "mobile": False
             }
         })
 

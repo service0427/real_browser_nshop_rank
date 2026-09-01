@@ -53,6 +53,7 @@ class BrowserProcessManager:
             "--disable-session-crashed-bubble",
             "--hide-crash-restore-bubble",
             "--disable-infobars",
+            "--disable-blink-features=AutomationControlled",
             "--test-type"
         ]
 
