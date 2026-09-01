@@ -58,83 +58,77 @@ class DOMNavigator:
     @classmethod
     async def click_next_page(cls, page: Page, target_page: int) -> bool:
         """
-        하단 페이징 영역으로 스크롤 후 대상 버튼을 시각적으로 강조(Highlight)하고
-        사용자가 눈으로 확인할 수 있도록 대기 후 리얼 물리 마우스 클릭 수행
+        스크롤 지연을 완전히 제거하기 위해 DOM 내 존재하는 원본 페이징 엘리먼트를
+        클래스명/속성 변경 없이 화면 상단(Fixed)에 띄우고,
+        시각적 하이라이트 후 리얼 물리 마우스 클릭을 수행하여 고속 페이징 처리
         """
-        logger.info(f"👉 [{target_page}페이지 이동] 하단 탐색 및 시각적 하이라이트 후 리얼 클릭")
+        logger.info(f"👉 [{target_page}페이지 이동] 노-스크롤 상단 플로팅 및 리얼 마우스 클릭")
 
-        paginator = page.locator('div[class*="paginator_inner"], div[class*="paginator"]')
+        # 1. 원본 페이징 엘리먼트를 상단에 고정 플로팅하고 대상 버튼 탐색 및 하이라이트
+        btn_info = await page.evaluate("""(target) => {
+            const p = document.querySelector('div[class*="paginator_inner"], div[class*="paginator"]');
+            if (!p) return null;
 
-        # 1. 대상 버튼이 DOM에 나타날 때까지 대기 및 부드러운 스크롤
-        btn = None
-        for _ in range(12):
-            if (target_page - 1) % 5 == 0:
-                btn = paginator.locator('a, button').filter(has_text=str(target_page)).first
-                if await btn.count() == 0:
-                    btn = paginator.locator('button:has-text("다음리스트"), a:has-text("다음")').first
-            else:
-                btn = paginator.locator('a, button').filter(has_text=str(target_page)).first
+            // 원본 엘리먼트를 화면 최상단 눈에 보이는 위치에 고정 (클래스명 등은 100% 유지)
+            p.style.position = 'fixed';
+            p.style.top = '80px';
+            p.style.left = '20px';
+            p.style.zIndex = '999999';
+            p.style.background = '#ffffff';
+            p.style.padding = '12px 20px';
+            p.style.borderRadius = '12px';
+            p.style.boxShadow = '0 8px 35px rgba(0,0,0,0.6)';
+            p.style.border = '3px solid #00c73c';
 
-            if await btn.count() > 0:
-                break
+            // 대상 버튼 탐색
+            const btns = Array.from(p.querySelectorAll('a, button'));
+            let targetBtn = null;
 
-            # 휠 스크롤 수행
-            mx = random.randint(350, 650)
-            my = random.randint(200, 450)
-            await page.mouse.move(mx, my, steps=2)
-            await page.mouse.wheel(0, random.randint(400, 750))
-            await asyncio.sleep(random.uniform(0.1, 0.2))
+            if ((target - 1) % 5 === 0) {
+                targetBtn = btns.find(el => el.innerText.trim() === String(target));
+                if (!targetBtn) {
+                    targetBtn = btns.find(el => el.innerText.trim().includes('다음') || el.getAttribute('aria-label')?.includes('다음'));
+                }
+            } else {
+                targetBtn = btns.find(el => el.innerText.trim() === String(target));
+            }
 
-        if not btn or await btn.count() == 0:
-            logger.error(f"❌ [{target_page}페이지] 페이징 버튼을 찾을 수 없음!")
+            if (!targetBtn) return null;
+
+            // 대상 버튼 시각적 하이라이트 효과 적용 (형광 노랑 + 네온 레드 테두리 + 확대)
+            targetBtn.style.outline = '4px solid #FF0055';
+            targetBtn.style.backgroundColor = '#FFFF00';
+            targetBtn.style.color = '#000000';
+            targetBtn.style.fontWeight = '900';
+            targetBtn.style.boxShadow = '0 0 25px rgba(255, 0, 85, 1.0)';
+            targetBtn.style.transform = 'scale(1.25)';
+            targetBtn.style.transition = 'all 0.3s ease';
+
+            const r = targetBtn.getBoundingClientRect();
+            return {
+                text: targetBtn.innerText.trim(),
+                x: r.left + r.width / 2,
+                y: r.top + r.height / 2
+            };
+        }""", target_page)
+
+        if not btn_info:
+            logger.error(f"❌ [{target_page}페이지] 페이징 버튼 탐색 실패!")
             return False
 
-        # 2. 버튼이 화면에 완전히 보이도록 스크롤
-        await btn.scroll_into_view_if_needed()
-        await asyncio.sleep(0.4)
+        logger.info(f"✨ [{target_page}p 버튼: '{btn_info['text']}'] 상단 고정 플로팅 완료 (좌표: {btn_info['x']:.1f}, {btn_info['y']:.1f})")
 
-        # 3. 시각적 하이라이트 효과 부여 (형광 노랑 배경 + 네온 레드 테두리 + 그림자 + 확대)
-        await btn.evaluate("""el => {
-            el.dataset.prevStyle = el.getAttribute('style') || '';
-            el.style.outline = '5px solid #FF0055';
-            el.style.backgroundColor = '#FFFF00';
-            el.style.color = '#000000';
-            el.style.fontWeight = '900';
-            el.style.boxShadow = '0 0 35px rgba(255, 0, 85, 1.0)';
-            el.style.transform = 'scale(1.3)';
-            el.style.transition = 'all 0.3s ease';
-            el.style.zIndex = '99999';
-        }""")
+        # 2. 사용자가 눈으로 확인할 수 있도록 0.8초 대기
+        await asyncio.sleep(0.8)
 
-        btn_text = await btn.inner_text()
-        box = await btn.bounding_box()
-        if not box:
-            logger.error(f"❌ [{target_page}페이지] 버튼 좌표 계산 실패!")
-            return False
-
-        logger.info(f"✨ [{target_page}p 버튼: '{btn_text}'] 시각적 하이라이트 표시 중! (좌표: {box['x']:.1f}, {box['y']:.1f})")
-
-        # 4. 사용자가 눈으로 확인할 수 있도록 1.2초간 대기
-        await asyncio.sleep(1.2)
-
-        # 5. 마우스 커서를 버튼 중앙으로 자연스럽게 이동 후 리얼 물리 클릭
-        target_x = box["x"] + box["width"] / 2
-        target_y = box["y"] + box["height"] / 2
-        logger.info(f"👉 [{target_page}p 버튼] 마우스 물리 이동 ({target_x:.1f}, {target_y:.1f}) -> 리얼 물리 클릭!")
-
-        await page.mouse.move(target_x, target_y, steps=16)
-        await asyncio.sleep(0.2)
+        # 3. 마우스 커서를 상단 고정 버튼으로 물리 이동 후 리얼 클릭
+        logger.info(f"👉 [{target_page}p 버튼] 마우스 물리 이동 ({btn_info['x']:.1f}, {btn_info['y']:.1f}) -> 리얼 물리 클릭!")
+        await page.mouse.move(btn_info["x"], btn_info["y"], steps=14)
+        await asyncio.sleep(0.18)
         await page.mouse.down()
         await asyncio.sleep(0.12)
         await page.mouse.up()
 
-        # 6. 하이라이트 스타일 원복
-        await btn.evaluate("""el => {
-            el.style.transform = 'scale(1.0)';
-            el.style.outline = 'none';
-            el.style.boxShadow = 'none';
-        }""")
-
-        # 7. 데이터 로드 대기
-        await asyncio.sleep(4.0)
+        # 4. 데이터 로드 대기 (스크롤이 필요 없으므로 3.5초 만에 신속 완료)
+        await asyncio.sleep(3.5)
         return True
