@@ -150,7 +150,8 @@ class TechBPartnerWorker:
                 target_id=target_id,
                 max_pages=max_pages,
                 headless=headless,
-                use_keyword_cache=use_keyword_cache
+                use_keyword_cache=use_keyword_cache,
+                active_workers=1
             )
 
             # 정상 완료 (200 OK)

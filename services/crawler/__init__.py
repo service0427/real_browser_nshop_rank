@@ -12,6 +12,7 @@ from core.logger import get_logger
 from services.profile_pool import ProfilePoolManager
 from services.keyword_cache import keyword_cache_mgr
 from services.rank_logger import RankLogger
+from services.block_logger import Block418Logger
 from services.crawler.browser_process import BrowserProcessManager
 from services.crawler.cdp_controller import CDPController
 from services.crawler.dom_navigator import DOMNavigator
@@ -27,7 +28,8 @@ async def crawl_shopping_rank_async(
     port: int = 9201,
     headless: bool = False,
     use_keyword_cache: bool = False,
-    profile_mgr: Optional[ProfilePoolManager] = None
+    profile_mgr: Optional[ProfilePoolManager] = None,
+    active_workers: int = 1
 ) -> Dict[str, Any]:
     """
     모듈화된 통합 쇼핑 순위 수집기 (0.0001초 캐시 조회 -> 모바일 통검 -> 25p 페이징 완주)
@@ -142,13 +144,28 @@ async def crawl_shopping_rank_async(
                             } catch(e) { return { err: e.message }; }
                         }""", data_url)
 
-                        if fetch_res.get("status") == 200:
+                        st_code = fetch_res.get("status", 0)
+                        if st_code == 200:
                             page_products, ad_cnt = DataExtractor.parse_products_from_next_data(fetch_res.get("json", {}))
                             if page_products:
                                 break
                         
+                        # 418 차단 히스토리 일자별 전용 저장
+                        if st_code == 418 or st_code == 0:
+                            Block418Logger.record_418(
+                                keyword=keyword,
+                                page=current_page,
+                                attempt=attempt + 1,
+                                profile_name=profile_name,
+                                active_workers=active_workers,
+                                consecutive_success_pages=target_page,
+                                request_url=data_url,
+                                status_code=st_code,
+                                extra_reason="WTM_418_RATE_LIMIT" if st_code == 418 else "NETWORK_OR_DISCONNECT"
+                            )
+
                         # 418 또는 실패 시 브라우저 세션 재갱신
-                        logger.info(f"🔄 [{current_page}페이지] 세션 갱신 및 재시도 (시도 {attempt+1}/3, status: {fetch_res.get('status')})")
+                        logger.info(f"🔄 [{current_page}페이지] 세션 갱신 및 재시도 (시도 {attempt+1}/3, status: {st_code})")
                         await DOMNavigator.navigate_to_search(page, keyword)
                         await asyncio.sleep(2.5)
                         
@@ -161,6 +178,17 @@ async def crawl_shopping_rank_async(
                     if not page_products:
                         logger.warning(f"[{current_page}페이지] 상품 목록 비어있음 또는 수집 중단 (418 차단 감지)")
                         crawl_error = f"NAVER_BLOCKED_AT_PAGE_{current_page}"
+                        Block418Logger.record_418(
+                            keyword=keyword,
+                            page=current_page,
+                            attempt=3,
+                            profile_name=profile_name,
+                            active_workers=active_workers,
+                            consecutive_success_pages=target_page,
+                            request_url=data_url,
+                            status_code=418,
+                            extra_reason="EXHAUSTED_3_RETRIES"
+                        )
                         break
 
                     # 1. 네이버 원본 item['rank'] 기반 페이징 연속성 검증
@@ -174,6 +202,17 @@ async def crawl_shopping_rank_async(
                     if first_item_rank is not None and current_page > 1 and first_item_rank < expected_min_rank:
                         logger.error(f"🚨 [{current_page}페이지] 네이버 원본 rank 불일치 감지 (첫 상품 item.rank={first_item_rank} < 예상최소 {expected_min_rank}) -> 418 미갱신 데이터로 판정 및 차단 처리")
                         crawl_error = f"STALE_RANK_SEQUENCE_AT_PAGE_{current_page}"
+                        Block418Logger.record_418(
+                            keyword=keyword,
+                            page=current_page,
+                            attempt=1,
+                            profile_name=profile_name,
+                            active_workers=active_workers,
+                            consecutive_success_pages=target_page,
+                            request_url=data_url,
+                            status_code=418,
+                            extra_reason=f"STALE_RANK_MISMATCH_FIRST_RANK_{first_item_rank}"
+                        )
                         break
 
                     # 2. 중복 MID 검사: 이전 페이지와 중복 상품 다수 발생 시 418 미갱신 판정
@@ -182,6 +221,17 @@ async def crawl_shopping_rank_async(
                     if new_mids and dup_count > (len(new_mids) * 0.4):
                         logger.error(f"🚨 [{current_page}페이지] 중복 상품 감지 ({dup_count}/{len(new_mids)}개) -> 418 미갱신 정적 데이터로 판정 및 차단 처리")
                         crawl_error = f"DUPLICATE_STALE_DATA_AT_PAGE_{current_page}"
+                        Block418Logger.record_418(
+                            keyword=keyword,
+                            page=current_page,
+                            attempt=1,
+                            profile_name=profile_name,
+                            active_workers=active_workers,
+                            consecutive_success_pages=target_page,
+                            request_url=data_url,
+                            status_code=418,
+                            extra_reason=f"DUPLICATE_MIDS_RATIO_{dup_count}_{len(new_mids)}"
+                        )
                         break
 
                     for m in new_mids:

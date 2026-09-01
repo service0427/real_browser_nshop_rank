@@ -140,7 +140,8 @@ class ClusterSupervisor:
                 pool_mgr=pool_mgr,
                 in_flight_keywords=self.in_flight_keywords,
                 lock=self.lock,
-                headless=self.headless
+                headless=self.headless,
+                active_workers=self.max_threads
             )
 
             # 빈 큐인 경우

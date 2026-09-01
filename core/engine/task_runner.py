@@ -25,7 +25,8 @@ class TaskRunner:
         pool_mgr: ProfilePoolManager,
         in_flight_keywords: Set[str],
         lock: asyncio.Lock,
-        headless: bool = False
+        headless: bool = False,
+        active_workers: int = 1
     ) -> Optional[Dict[str, Any]]:
         """단일 태스크를 임대받아 처리하고 결과 반환 및 통계 딕셔너리 리턴"""
         # 1. 태스크 임대 (Lease)
@@ -45,24 +46,18 @@ class TaskRunner:
         rem_str = f" [남은상품: {keyword_remaining_count}/{keyword_total_count}개 | 전체큐잔여: {total_remaining_tasks:,}개]" if total_remaining_tasks else f" [동일키워드: {keyword_total_count}개]"
         logger.info(f"▶ [W{worker_id} | Task #{task_id}] 키워드='{keyword}', 타겟='{target_id}'{rem_str} (캐시: {'ON' if use_keyword_cache else 'OFF'})")
 
-        # 2. [Non-blocking Fast Requeue: 비행 중 키워드 즉시 재할당 엔진]
-        is_in_flight = False
+        # 2. In-Flight Fast Requeue 검사
         if use_keyword_cache:
             async with lock:
                 if keyword in in_flight_keywords:
-                    is_in_flight = True
-                else:
-                    in_flight_keywords.add(keyword)
-
-        if is_in_flight:
-            logger.info(f"🔄 [W{worker_id} | 0초 즉시 반납] '{keyword}' 타 쓰레드가 선행 탐색 중 -> 브라우저 유휴 대기 없이 큐 맨 뒤로 반납 후 다음 작업 즉시 진행!")
-            api_worker.return_task_result(
-                task_id=task_id,
-                service="shop",
-                is_blocked=True,
-                error_message=f"[{keyword}] 타 쓰레드 선행 탐색 중 -> 캐시 활용을 위해 큐 맨 뒤로 재할당"
-            )
-            return {"requeued": True, "task_id": task_id, "keyword": keyword}
+                    api_worker.return_task_result(
+                        task_id=task_id,
+                        service="shop",
+                        is_blocked=True,
+                        error_message="IN_FLIGHT_FAST_REQUEUE"
+                    )
+                    return {"requeued": True, "task_id": task_id, "keyword": keyword}
+                in_flight_keywords.add(keyword)
 
         # 3. 크롤링 수행
         try:
@@ -73,7 +68,8 @@ class TaskRunner:
                 port=port,
                 headless=headless,
                 use_keyword_cache=use_keyword_cache,
-                profile_mgr=pool_mgr
+                profile_mgr=pool_mgr,
+                active_workers=active_workers
             )
         finally:
             if use_keyword_cache:
