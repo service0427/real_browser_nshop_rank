@@ -118,6 +118,46 @@ def handle_place(args):
     print("=" * 80)
 
 
+def handle_toggle(args):
+    from services.ip_toggle import ip_toggle_mgr
+    if args.check:
+        wan_info = ip_toggle_mgr.get_wan_info()
+        ext_ip = ip_toggle_mgr.get_public_ip_external()
+        state = ip_toggle_mgr.load_state()
+        is_ready, rem = ip_toggle_mgr.check_cooldown()
+
+        print("\n" + "=" * 60)
+        print("🌐 CURRENT IP & TOGGLE STATUS:")
+        print("=" * 60)
+        print(f"• Router WAN IP   : {wan_info.get('ip')} ({wan_info.get('status')})")
+        print(f"• Router WAN MAC  : {wan_info.get('mac')}")
+        print(f"• External Pub IP : {ext_ip or 'UNKNOWN'}")
+        print(f"• Total Toggles   : {state.get('toggle_count', 0)}회")
+        print(f"• Last Old/New IP : {state.get('last_old_ip')} ➜ {state.get('last_new_ip')}")
+        print(f"• 10m Cooldown    : {'🟢 READY' if is_ready else f'⏳ WAITING ({rem // 60}m {rem % 60}s 남음)'}")
+        print("=" * 60 + "\n")
+        return
+
+    res = ip_toggle_mgr.toggle_ip(force=args.force, timeout_sec=args.timeout)
+    print("\n" + "=" * 60)
+    print("🔄 IP TOGGLE RESULT:")
+    print("=" * 60)
+    print(f"• Success         : {res.get('success')}")
+    if res.get("success"):
+        print(f"• Previous IP     : {res.get('old_ip')}")
+        print(f"• New IP          : {res.get('new_ip')}")
+        print(f"• New MAC         : {res.get('new_mac')}")
+        print(f"• Elapsed Time    : {res.get('duration_sec')}s")
+        print(f"• IP Changed      : {'YES' if res.get('ip_changed') else 'SAME (ISP Assigned Same Subnet)'}")
+    else:
+        print(f"• Reason          : {res.get('reason')}")
+        print(f"• Message         : {res.get('message', 'N/A')}")
+        if res.get("remaining_seconds"):
+            rem = res["remaining_seconds"]
+            print(f"• Cooldown Left   : {rem // 60}분 {rem % 60}초 (강제 실행은 --force 플래그 사용)")
+    print("=" * 60 + "\n")
+
+
 def handle_api(args):
     import uvicorn
     from config.settings import API_HOST
@@ -155,7 +195,13 @@ def main():
     p_place.add_argument("--no-block-media", action="store_true", help="Do not block media/images")
     p_place.add_argument("--proxy", default=None, help="Custom proxy URL")
 
-    # 4. API Command
+    # 4. Toggle Command (MikroTik WAN IP Toggle)
+    p_toggle = subparsers.add_parser("toggle", help="MikroTik Router WAN IP Toggle & Health Check")
+    p_toggle.add_argument("--force", "-f", action="store_true", help="Force toggle ignoring 10-minute cooldown")
+    p_toggle.add_argument("--timeout", "-t", type=int, default=90, help="Timeout in seconds (default: 90)")
+    p_toggle.add_argument("--check", "-c", action="store_true", help="Check current IP and cooldown status only")
+
+    # 5. API Command
     p_api = subparsers.add_parser("api", help="Start FastAPI Server")
     p_api.add_argument("--port", "-p", type=int, default=None, help="API server port")
 
@@ -167,6 +213,8 @@ def main():
         handle_worker(args)
     elif args.command == "place":
         handle_place(args)
+    elif args.command == "toggle":
+        handle_toggle(args)
     elif args.command == "api":
         handle_api(args)
     else:
