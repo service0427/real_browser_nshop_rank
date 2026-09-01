@@ -18,6 +18,7 @@ services/runtime/keyword_cache/
 services/runtime/browser_cache/
 services/runtime/logs/
 services/runtime/rank_logs/
+services/runtime/*.json
 
 # IDE
 .idea/

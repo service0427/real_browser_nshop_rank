@@ -18,8 +18,14 @@ if BASE_DIR not in sys.path:
 
 from core.logger import get_logger
 from services.profile_pool import ProfilePoolManager
-from services.keyword_cache import keyword_cache_mgr
-from services.ip_toggle import ip_toggle_mgr
+try:
+    from services.infra.ip_toggle import ip_toggle_mgr
+except ImportError:
+    try:
+        from services.ip_toggle import ip_toggle_mgr
+    except ImportError:
+        ip_toggle_mgr = None
+
 from core.engine.task_runner import TaskRunner
 
 logger = get_logger("engine.supervisor")

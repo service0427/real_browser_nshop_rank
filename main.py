@@ -119,7 +119,14 @@ def handle_place(args):
 
 
 def handle_toggle(args):
-    from services.ip_toggle import ip_toggle_mgr
+    try:
+        from services.infra.ip_toggle import ip_toggle_mgr
+    except ImportError:
+        try:
+            from services.ip_toggle import ip_toggle_mgr
+        except ImportError:
+            print("❌ IP toggle module not found.")
+            return
     if args.check:
         wan_info = ip_toggle_mgr.get_wan_info()
         ext_ip = ip_toggle_mgr.get_public_ip_external()
