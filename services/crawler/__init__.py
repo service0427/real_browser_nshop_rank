@@ -98,10 +98,14 @@ async def crawl_shopping_rank_async(
             build_id = nd1.get("buildId") if nd1 else None
             p1_products, p1_ad_cnt = DataExtractor.parse_products_from_next_data(nd1) if nd1 else ([], 0)
 
+            seen_mids = set()
             if p1_products:
                 logger.info(f"✔ [1페이지 수집 성공] 1위 ~ {len(p1_products)}위 ({len(p1_products)}개 오가닉, 광고 {p1_ad_cnt}개)")
                 for idx, item in enumerate(p1_products):
                     current_rank = idx + 1
+                    mid = str(item.get("id") or item.get("nvMid") or "")
+                    if mid:
+                        seen_mids.add(mid)
                     match_res = DataExtractor.match_target(item, target_id)
                     if match_res:
                         matched_val, matched_field = match_res
@@ -155,9 +159,20 @@ async def crawl_shopping_rank_async(
                         await asyncio.sleep(1.5)
 
                     if not page_products:
-                        logger.warning(f"[{current_page}페이지] 상품 목록 비어있음 또는 수집 중단 (418 차단 의심)")
+                        logger.warning(f"[{current_page}페이지] 상품 목록 비어있음 또는 수집 중단 (418 차단 감지)")
                         crawl_error = f"NAVER_BLOCKED_AT_PAGE_{current_page}"
                         break
+
+                    # 중복 데이터 검사: 418로 인해 이전 페이지 데이터가 재반환된 경우 감지
+                    new_mids = [str(p.get("id") or p.get("nvMid") or "") for p in page_products if (p.get("id") or p.get("nvMid"))]
+                    dup_count = sum(1 for m in new_mids if m in seen_mids)
+                    if new_mids and dup_count > (len(new_mids) * 0.4):
+                        logger.error(f"🚨 [{current_page}페이지] 중복 상품 감지 ({dup_count}/{len(new_mids)}개) -> 418 미갱신 정적 데이터로 판정 및 차단 처리")
+                        crawl_error = f"DUPLICATE_STALE_DATA_AT_PAGE_{current_page}"
+                        break
+
+                    for m in new_mids:
+                        seen_mids.add(m)
 
                     logger.info(f"✔ [{current_page}페이지 수집 성공] {len(all_organic_products)+1}위 ~ {len(all_organic_products)+len(page_products)}위 ({len(page_products)}개 오가닉, 광고 {ad_cnt}개)")
 
