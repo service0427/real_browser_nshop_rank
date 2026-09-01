@@ -113,11 +113,11 @@ async def crawl_shopping_rank_async(
                         break
                 all_organic_products.extend(p1_products)
 
+            crawl_error = None
             # 6. 2페이지 ~ 25페이지(최대 1000위) 순차 수집 (Next.js Data API + 스마트 세션 갱신)
             if not target_found and max_pages > 1 and all_organic_products:
                 import urllib.parse
                 encoded_kw = urllib.parse.quote(keyword)
-                await asyncio.sleep(1.5)  # 1페이지 완료 후 안정화 딜레이
 
                 for current_page in range(2, max_pages + 1):
                     data_url = f"/_next/data/{build_id}/search/all.json?query={encoded_kw}&pagingIndex={current_page}&pagingSize=40"
@@ -155,7 +155,8 @@ async def crawl_shopping_rank_async(
                         await asyncio.sleep(1.5)
 
                     if not page_products:
-                        logger.warning(f"[{current_page}페이지] 상품 목록 비어있음 또는 수집 종료")
+                        logger.warning(f"[{current_page}페이지] 상품 목록 비어있음 또는 수집 중단 (418 차단 의심)")
+                        crawl_error = f"NAVER_BLOCKED_AT_PAGE_{current_page}"
                         break
 
                     logger.info(f"✔ [{current_page}페이지 수집 성공] {len(all_organic_products)+1}위 ~ {len(all_organic_products)+len(page_products)}위 ({len(page_products)}개 오가닉, 광고 {ad_cnt}개)")
@@ -176,7 +177,7 @@ async def crawl_shopping_rank_async(
                     all_organic_products.extend(page_products)
                     target_page = current_page
 
-                    if target_found or len(page_products) < 10:
+                    if target_found:
                         break
 
                     await asyncio.sleep(1.0)
@@ -188,19 +189,23 @@ async def crawl_shopping_rank_async(
         if all_organic_products:
             rank_file_path = RankLogger.save_keyword_ranks(keyword, all_organic_products)
 
-        # 8. 캐시 저장
-        if use_keyword_cache and all_organic_products:
+        # 8. 캐시 저장 (타겟을 찾았거나 정상 완주 시에만)
+        if use_keyword_cache and all_organic_products and (target_found or target_page >= max_pages):
             keyword_cache_mgr.update(keyword, all_organic_products, max_page_crawled=target_page)
+
+        # 완주 및 정상 성공 여부 판별 (타겟 발견 or 목표 페이지 전수 완주)
+        is_success = bool(all_organic_products) and (target_found or (target_page >= max_pages and not crawl_error))
 
         # 9. 자가치유 프로필 보고
         if profile_mgr:
-            profile_mgr.report_result(profile_id, success=bool(all_organic_products), is_login_or_block=not bool(all_organic_products))
+            profile_mgr.report_result(profile_id, success=is_success, is_login_or_block=not is_success)
 
         elapsed = round(time.time() - start_time, 2)
         return {
-            "status": 200 if all_organic_products else 500,
+            "status": 200 if is_success else 500,
+            "error": None if is_success else (crawl_error or "INCOMPLETE_PAGING_BLOCKED"),
             "targetFound": target_found,
-            "targetRank": target_rank if target_found else (0 if all_organic_products else None),
+            "targetRank": target_rank if target_found else (0 if is_success else None),
             "targetProduct": target_product,
             "matchedFieldName": matched_field,
             "pagesCrawled": target_page,

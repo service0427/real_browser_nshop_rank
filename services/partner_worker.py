@@ -178,7 +178,7 @@ class TechBPartnerWorker:
 
             # 실패 (차단 또는 2회 재시도 초과)
             else:
-                err_msg = crawl_res.get("errorMessage") or "네이버 차단 또는 수집 실패"
+                err_msg = crawl_res.get("error") or crawl_res.get("errorMessage") or "네이버 차단 또는 수집 실패"
                 logger.error(f"🚨 [Task #{task_id}] 수집 실패/차단 감지: {err_msg}")
                 self.return_task_result(
                     task_id=task_id,
