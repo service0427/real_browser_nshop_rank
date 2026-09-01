@@ -163,7 +163,20 @@ async def crawl_shopping_rank_async(
                         crawl_error = f"NAVER_BLOCKED_AT_PAGE_{current_page}"
                         break
 
-                    # 중복 데이터 검사: 418로 인해 이전 페이지 데이터가 재반환된 경우 감지
+                    # 1. 네이버 원본 item['rank'] 기반 페이징 연속성 검증
+                    first_item_rank = None
+                    for p in page_products:
+                        if isinstance(p.get("rank"), int):
+                            first_item_rank = p.get("rank")
+                            break
+
+                    expected_min_rank = (current_page - 1) * 35  # 광고 제외 감안한 최소 랭크 기준 (2페이지면 최소 35위 이상)
+                    if first_item_rank is not None and current_page > 1 and first_item_rank < expected_min_rank:
+                        logger.error(f"🚨 [{current_page}페이지] 네이버 원본 rank 불일치 감지 (첫 상품 item.rank={first_item_rank} < 예상최소 {expected_min_rank}) -> 418 미갱신 데이터로 판정 및 차단 처리")
+                        crawl_error = f"STALE_RANK_SEQUENCE_AT_PAGE_{current_page}"
+                        break
+
+                    # 2. 중복 MID 검사: 이전 페이지와 중복 상품 다수 발생 시 418 미갱신 판정
                     new_mids = [str(p.get("id") or p.get("nvMid") or "") for p in page_products if (p.get("id") or p.get("nvMid"))]
                     dup_count = sum(1 for m in new_mids if m in seen_mids)
                     if new_mids and dup_count > (len(new_mids) * 0.4):
