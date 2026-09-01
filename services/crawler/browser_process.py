@@ -49,11 +49,11 @@ class BrowserProcessManager:
             "--disk-cache-size=1073741824",  # 1GB 캐시
             "--no-first-run",
             "--no-default-browser-check",
-            "--no-sandbox",
             "--disable-dev-shm-usage",
             "--disable-session-crashed-bubble",
             "--hide-crash-restore-bubble",
-            "--disable-infobars"
+            "--disable-infobars",
+            "--test-type"
         ]
 
         if headless:
