@@ -64,34 +64,39 @@ class CDPController:
             "width": dev_w,
             "height": dev_h,
             "deviceScaleFactor": dpr,
-            "mobile": False,
+            "mobile": True,
             "screenWidth": dev_w,
             "screenHeight": dev_h,
             "screenOrientation": {"type": "landscapePrimary", "angle": 0}
         })
-        await self.cdp_session.send("Emulation.setTouchEmulationEnabled", {"enabled": True, "maxTouchPoints": 1})
+        await self.cdp_session.send("Emulation.setTouchEmulationEnabled", {"enabled": True, "maxTouchPoints": 5})
 
         # 3. Nest Hub 고신뢰 UserAgent & Client Hints 주입
         nav = self.device_config.get("navigator", {})
-        ua = nav.get("userAgent", "Mozilla/5.0 (Linux; Android) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36 CrKey/1.54.248666")
+        ua = nav.get("userAgent", "Mozilla/5.0 (Linux; Android) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.7977.64 Safari/537.36 CrKey/1.54.248666")
         ch = self.device_config.get("clientHints", {})
 
         await self.cdp_session.send("Emulation.setUserAgentOverride", {
             "userAgent": ua,
             "acceptLanguage": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
-            "platform": "Linux x86_64",
+            "platform": "Linux armv8l",
             "userAgentMetadata": {
                 "brands": ch.get("brands", [
-                    {"brand": "Not=A?Brand", "version": "99"},
-                    {"brand": "Google Chrome", "version": "151"},
-                    {"brand": "Chromium", "version": "151"}
+                    {"brand": "Not?A_Brand", "version": "24"},
+                    {"brand": "Google Chrome", "version": "152"},
+                    {"brand": "Chromium", "version": "152"}
                 ]),
-                "fullVersion": "151.0.7922.173",
+                "fullVersionList": ch.get("fullVersionList", [
+                    {"brand": "Not?A_Brand", "version": "24.0.0.0"},
+                    {"brand": "Google Chrome", "version": "152.0.7977.64"},
+                    {"brand": "Chromium", "version": "152.0.7977.64"}
+                ]),
+                "fullVersion": "152.0.7977.64",
                 "platform": "Android",
-                "platformVersion": "",
+                "platformVersion": "10",
                 "architecture": "",
-                "model": "",
-                "mobile": False
+                "model": "Nest Hub",
+                "mobile": True
             }
         })
 

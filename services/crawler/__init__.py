@@ -120,12 +120,24 @@ async def crawl_shopping_rank_async(
                 all_organic_products.extend(p1_products)
 
             crawl_error = None
-            # 6. 2페이지 ~ 25페이지(최대 1000위) 순차 수집 (Next.js Data API + 스마트 세션 갱신)
+            # 6. 2페이지 ~ 25페이지(최대 1000위) 순차 수집 (Next.js Data API + 5페이지 단위 지능형 토큰 체이닝)
             if not target_found and max_pages > 1 and all_organic_products:
                 import urllib.parse
                 encoded_kw = urllib.parse.quote(keyword)
+                await asyncio.sleep(1.5)  # 1페이지 진입 후 WTM 세션 토큰 안정화 대기
 
                 for current_page in range(2, max_pages + 1):
+                    # 5페이지 단위 청크 전환 시점 (6p, 11p, 16p, 21p)
+                    # WTM 토큰 소진 전 모바일 통검 재경유로 새 세션 토큰 & build_id 사전 자동 갱신
+                    if (current_page - 1) % 5 == 0:
+                        logger.info(f"🔑 [{current_page}페이지 진입] 5페이지 청크 토큰 갱신: 모바일 통검 경유하여 새 세션 토큰 사전 발급...")
+                        await DOMNavigator.navigate_to_search(page, keyword)
+                        await asyncio.sleep(2.5)  # 토큰 발급 대기
+                        nd_chunk = await DataExtractor.extract_next_data(page)
+                        if nd_chunk and nd_chunk.get("buildId"):
+                            build_id = nd_chunk.get("buildId")
+                        await asyncio.sleep(1.0)
+
                     data_url = f"/_next/data/{build_id}/search/all.json?query={encoded_kw}&pagingIndex={current_page}&pagingSize=40"
                     
                     page_products = []
@@ -173,7 +185,7 @@ async def crawl_shopping_rank_async(
                         if nd_refresh and nd_refresh.get("buildId"):
                             build_id = nd_refresh.get("buildId")
                         data_url = f"/_next/data/{build_id}/search/all.json?query={encoded_kw}&pagingIndex={current_page}&pagingSize=40"
-                        await asyncio.sleep(1.5)
+                        await asyncio.sleep(1.0)
 
                     if not page_products:
                         logger.warning(f"[{current_page}페이지] 상품 목록 비어있음 또는 수집 중단 (418 차단 감지)")
