@@ -93,21 +93,60 @@ async def crawl_shopping_rank_async(
 
             # 5. 모바일 통합검색 진입 및 1페이지 수집
             await DOMNavigator.navigate_to_search(page, keyword)
-            await asyncio.sleep(2.0)
+            await asyncio.sleep(3.5)
 
-            # 1페이지 SSR __NEXT_DATA__ 파싱
-            nd1 = await DataExtractor.extract_next_data(page)
-            build_id = nd1.get("buildId") if nd1 else None
-            p1_products, p1_ad_cnt = DataExtractor.parse_products_from_next_data(nd1) if nd1 else ([], 0)
+            async def extract_dom_products(p_page):
+                return await p_page.evaluate("""() => {
+                    const items = Array.from(document.querySelectorAll('li[class*="product_item"], div[class*="product_item"]'));
+                    const results = [];
+                    let adCnt = 0;
+                    for (const el of items) {
+                        const tEl = el.querySelector('strong, [class*="title"], [class*="tit"]');
+                        const pEl = el.querySelector('em, [class*="price"], [class*="num"]');
+                        const aEl = el.querySelector('a[data-nv-mid], a[href*="nvMid="], a[href*="products/"], a[href*="cr.shopping.naver.com"]');
+                        const isAd = el.innerText.includes('광고') || !!el.querySelector('[class*="ad_"]');
+                        
+                        const title = tEl ? tEl.innerText.trim() : '';
+                        const price = pEl ? pEl.innerText.trim().replace(/\\n/g, ' ') : '';
+                        let nvMid = aEl ? (aEl.getAttribute('data-nv-mid') || '') : '';
+                        if (!nvMid && aEl && aEl.href) {
+                            const m1 = aEl.href.match(/nvMid=(\\d+)/);
+                            const m2 = aEl.href.match(/products\\/(\\d+)/);
+                            if (m1) nvMid = m1[1];
+                            else if (m2) nvMid = m2[1];
+                        }
+                        if (title) {
+                            if (isAd) {
+                                adCnt++;
+                            } else {
+                                results.push({
+                                    productTitle: title,
+                                    title: title,
+                                    name: title,
+                                    price: price,
+                                    lowPrice: price,
+                                    nvMid: nvMid,
+                                    id: nvMid,
+                                    channelProductId: nvMid
+                                });
+                            }
+                        }
+                    }
+                    return { products: results, adCount: adCnt };
+                }""")
 
-            seen_mids = set()
+            p1_res = await extract_dom_products(page)
+            p1_products = p1_res.get("products", [])
+            p1_ad_cnt = p1_res.get("adCount", 0)
+
+            seen_titles = set()
             if p1_products:
                 logger.info(f"✔ [1페이지 수집 성공] 1위 ~ {len(p1_products)}위 ({len(p1_products)}개 오가닉, 광고 {p1_ad_cnt}개)")
                 for idx, item in enumerate(p1_products):
                     current_rank = idx + 1
-                    mid = str(item.get("id") or item.get("nvMid") or "")
-                    if mid:
-                        seen_mids.add(mid)
+                    t = item.get("productTitle", "")
+                    if t:
+                        seen_titles.add(t)
                     match_res = DataExtractor.match_target(item, target_id)
                     if match_res:
                         matched_val, matched_field = match_res
@@ -120,100 +159,24 @@ async def crawl_shopping_rank_async(
                 all_organic_products.extend(p1_products)
 
             crawl_error = None
-            # 6. 2페이지 ~ 25페이지(최대 1000위) 순차 수집 (Next.js Data API + 5페이지 단위 지능형 토큰 체이닝)
+            # 6. 2페이지 ~ max_pages 순차 수집 (시각적 하이라이트 + 1초 대기 + 리얼 물리 마우스 클릭)
             if not target_found and max_pages > 1 and all_organic_products:
-                import urllib.parse
-                encoded_kw = urllib.parse.quote(keyword)
-                await asyncio.sleep(1.5)  # 1페이지 진입 후 WTM 세션 토큰 안정화 대기
-
                 for current_page in range(2, max_pages + 1):
-                    # 5페이지 단위 청크 전환 시점 (6p, 11p, 16p, 21p)
-                    # WTM 토큰 소진 전 모바일 통검 재경유로 새 세션 토큰 & build_id 사전 자동 갱신
-                    if (current_page - 1) % 5 == 0:
-                        logger.info(f"🔑 [{current_page}페이지 진입] 5페이지 청크 토큰 갱신: 모바일 통검 경유하여 새 세션 토큰 사전 발급...")
-                        await DOMNavigator.navigate_to_search(page, keyword)
-                        await asyncio.sleep(2.5)  # 토큰 발급 대기
-                        nd_chunk = await DataExtractor.extract_next_data(page)
-                        if nd_chunk and nd_chunk.get("buildId"):
-                            build_id = nd_chunk.get("buildId")
-                        await asyncio.sleep(1.0)
-
-                    data_url = f"/_next/data/{build_id}/search/all.json?query={encoded_kw}&pagingIndex={current_page}&pagingSize=40"
-                    
-                    page_products = []
-                    ad_cnt = 0
-                    
-                    for attempt in range(3):
-                        fetch_res = await page.evaluate("""async (url) => {
-                            try {
-                                const r = await window.fetch(url, {
-                                    method: 'GET',
-                                    headers: { 'x-nextjs-data': '1', 'accept': '*/*' },
-                                    credentials: 'include'
-                                });
-                                if (r.status === 200) return { status: 200, json: await r.json() };
-                                return { status: r.status };
-                            } catch(e) { return { err: e.message }; }
-                        }""", data_url)
-
-                        st_code = fetch_res.get("status", 0)
-                        if st_code == 200:
-                            page_products, ad_cnt = DataExtractor.parse_products_from_next_data(fetch_res.get("json", {}))
-                            if page_products:
-                                break
-                        
-                        # 418 차단 히스토리 일자별 전용 저장
-                        if st_code == 418 or st_code == 0:
-                            Block418Logger.record_418(
-                                keyword=keyword,
-                                page=current_page,
-                                attempt=attempt + 1,
-                                profile_name=profile_name,
-                                active_workers=active_workers,
-                                consecutive_success_pages=target_page,
-                                request_url=data_url,
-                                status_code=st_code,
-                                extra_reason="WTM_418_RATE_LIMIT" if st_code == 418 else "NETWORK_OR_DISCONNECT"
-                            )
-
-                        # 418 또는 실패 시 브라우저 세션 재갱신
-                        logger.info(f"🔄 [{current_page}페이지] 세션 갱신 및 재시도 (시도 {attempt+1}/3, status: {st_code})")
-                        await DOMNavigator.navigate_to_search(page, keyword)
-                        await asyncio.sleep(2.5)
-                        
-                        nd_refresh = await DataExtractor.extract_next_data(page)
-                        if nd_refresh and nd_refresh.get("buildId"):
-                            build_id = nd_refresh.get("buildId")
-                        data_url = f"/_next/data/{build_id}/search/all.json?query={encoded_kw}&pagingIndex={current_page}&pagingSize=40"
-                        await asyncio.sleep(1.0)
-
-                    if not page_products:
-                        logger.warning(f"[{current_page}페이지] 상품 목록 비어있음 또는 수집 중단 (418 차단 감지)")
-                        crawl_error = f"NAVER_BLOCKED_AT_PAGE_{current_page}"
-                        Block418Logger.record_418(
-                            keyword=keyword,
-                            page=current_page,
-                            attempt=3,
-                            profile_name=profile_name,
-                            active_workers=active_workers,
-                            consecutive_success_pages=target_page,
-                            request_url=data_url,
-                            status_code=418,
-                            extra_reason="EXHAUSTED_3_RETRIES"
-                        )
+                    logger.info(f"👉 [{current_page}페이지 탐색 및 이동]")
+                    clicked = await DOMNavigator.click_next_page(page, current_page)
+                    if not clicked:
+                        logger.warning(f"[{current_page}페이지] 페이징 버튼 클릭 실패 -> 수집 종료")
+                        crawl_error = f"PAGING_CLICK_FAILED_AT_PAGE_{current_page}"
                         break
 
-                    # 1. 네이버 원본 item['rank'] 기반 페이징 연속성 검증
-                    first_item_rank = None
-                    for p in page_products:
-                        if isinstance(p.get("rank"), int):
-                            first_item_rank = p.get("rank")
-                            break
+                    # 렌더링된 상품 추출
+                    cur_res = await extract_dom_products(page)
+                    cur_products = cur_res.get("products", [])
+                    new_products = [x for x in cur_products if x.get("productTitle") not in seen_titles]
 
-                    expected_min_rank = (current_page - 1) * 35  # 광고 제외 감안한 최소 랭크 기준 (2페이지면 최소 35위 이상)
-                    if first_item_rank is not None and current_page > 1 and first_item_rank < expected_min_rank:
-                        logger.error(f"🚨 [{current_page}페이지] 네이버 원본 rank 불일치 감지 (첫 상품 item.rank={first_item_rank} < 예상최소 {expected_min_rank}) -> 418 미갱신 데이터로 판정 및 차단 처리")
-                        crawl_error = f"STALE_RANK_SEQUENCE_AT_PAGE_{current_page}"
+                    if not new_products:
+                        logger.warning(f"[{current_page}페이지] 신규 상품 0개 -> 418 차단 또는 마지막 페이지로 판정")
+                        crawl_error = f"NO_NEW_PRODUCTS_AT_PAGE_{current_page}"
                         Block418Logger.record_418(
                             keyword=keyword,
                             page=current_page,
@@ -221,39 +184,21 @@ async def crawl_shopping_rank_async(
                             profile_name=profile_name,
                             active_workers=active_workers,
                             consecutive_success_pages=target_page,
-                            request_url=data_url,
+                            request_url=page.url,
                             status_code=418,
-                            extra_reason=f"STALE_RANK_MISMATCH_FIRST_RANK_{first_item_rank}"
+                            extra_reason="NO_NEW_PRODUCTS"
                         )
                         break
 
-                    # 2. 중복 MID 검사: 이전 페이지와 중복 상품 다수 발생 시 418 미갱신 판정
-                    new_mids = [str(p.get("id") or p.get("nvMid") or "") for p in page_products if (p.get("id") or p.get("nvMid"))]
-                    dup_count = sum(1 for m in new_mids if m in seen_mids)
-                    if new_mids and dup_count > (len(new_mids) * 0.4):
-                        logger.error(f"🚨 [{current_page}페이지] 중복 상품 감지 ({dup_count}/{len(new_mids)}개) -> 418 미갱신 정적 데이터로 판정 및 차단 처리")
-                        crawl_error = f"DUPLICATE_STALE_DATA_AT_PAGE_{current_page}"
-                        Block418Logger.record_418(
-                            keyword=keyword,
-                            page=current_page,
-                            attempt=1,
-                            profile_name=profile_name,
-                            active_workers=active_workers,
-                            consecutive_success_pages=target_page,
-                            request_url=data_url,
-                            status_code=418,
-                            extra_reason=f"DUPLICATE_MIDS_RATIO_{dup_count}_{len(new_mids)}"
-                        )
-                        break
+                    start_rank = len(all_organic_products) + 1
+                    end_rank = len(all_organic_products) + len(new_products)
+                    logger.info(f"✔ [{current_page}페이지 수집 성공] {start_rank}위 ~ {end_rank}위 ({len(new_products)}개 신규 오가닉)")
 
-                    for m in new_mids:
-                        seen_mids.add(m)
-
-                    logger.info(f"✔ [{current_page}페이지 수집 성공] {len(all_organic_products)+1}위 ~ {len(all_organic_products)+len(page_products)}위 ({len(page_products)}개 오가닉, 광고 {ad_cnt}개)")
-
-                    # 타겟 상품 실시간 매칭
-                    for idx, item in enumerate(page_products):
+                    for idx, item in enumerate(new_products):
                         current_rank = len(all_organic_products) + idx + 1
+                        t = item.get("productTitle", "")
+                        if t:
+                            seen_titles.add(t)
                         match_res = DataExtractor.match_target(item, target_id)
                         if match_res:
                             matched_val, matched_field = match_res
@@ -264,13 +209,11 @@ async def crawl_shopping_rank_async(
                             logger.info(f"★ 타겟 상품 발견: #{target_rank}위 ({target_product.get('productName')}) -> 즉시 조기 종료")
                             break
 
-                    all_organic_products.extend(page_products)
+                    all_organic_products.extend(new_products)
                     target_page = current_page
 
                     if target_found:
                         break
-
-                    await asyncio.sleep(1.0)
 
             await context.close()
 
