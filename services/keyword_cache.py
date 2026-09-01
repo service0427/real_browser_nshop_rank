@@ -23,7 +23,7 @@ class KeywordRankCacheManager:
     """
     키워드 단위 독립 파일 캐시 매니저
     - 경로: saved_keyword_cache/{키워드}.json
-    - 1페이지(40개) ~ 10페이지(400개) 수집된 상품/순위 데이터를 키워드별 개별 JSON 파일로 저장
+    - 1페이지(40개) ~ 25페이지(1000개) 수집된 상품/순위 데이터를 키워드별 개별 JSON 파일로 저장
     - 동일 키워드 조회 시 0.0002초 만에 개별 파일/메모리에서 타겟 매칭 (트래픽 0KB)
     - 네이버 쇼핑 갱신 주기(11:00, 19:00) 기준 스마트 TTL 관리
     """
@@ -147,9 +147,9 @@ class KeywordRankCacheManager:
                 "source": "CACHE_MATCH"
             }
 
-        # 2. 10페이지(400위) 전수 조사 완료 키워드인 경우 -> 0위 즉시 확정
-        if max_page >= 10:
-            logger.info(f"⚡ [캐시 0위 확정 (CACHE 400 EXHAUSTED)] 키워드='{keyword_clean}', 타겟='{target_clean}' -> 400위 내 없음 (0위 즉시 반환)")
+        # 2. 25페이지(1000위) 전수 조사 완료 키워드인 경우 -> 0위 즉시 확정
+        if max_page >= 25:
+            logger.info(f"⚡ [캐시 0위 확정 (CACHE 1000 EXHAUSTED)] 키워드='{keyword_clean}', 타겟='{target_clean}' -> 1000위 내 없음 (0위 즉시 반환)")
             return {
                 "hit": True,
                 "found": False,
@@ -159,7 +159,7 @@ class KeywordRankCacheManager:
                 "maxPage": max_page,
                 "cachedAt": cached_at,
                 "cacheFile": os.path.join(self.cache_dir, _get_safe_filename(keyword_clean)),
-                "source": "CACHE_EXHAUSTED_400"
+                "source": "CACHE_EXHAUSTED_1000"
             }
 
         # 3. 추가 탐색 필요

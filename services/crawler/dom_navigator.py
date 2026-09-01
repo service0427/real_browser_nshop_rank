@@ -62,14 +62,34 @@ class DOMNavigator:
     @staticmethod
     async def click_next_page(page: Page, target_page: int) -> bool:
         """
-        실제 네이버 페이징 DOM 버튼 복제(Clone) 및 상단 물리 클릭 수행
+        실제 네이버 페이징 DOM 버튼 복제(Clone) 및 상단 물리 클릭 수행 (1~25페이지 / 최대 1000위 지원)
         """
         logger.info(f"👉 [{target_page}페이지 이동] 실제 네이버 페이징 DOM 버튼 복제(Clone) 및 상단 리얼 클릭 수행")
+
+        # 페이징 영역이 렌더링되도록 하단 스크롤
+        try:
+            await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            await asyncio.sleep(0.5)
+        except Exception:
+            pass
         
         clone_js = f"""
         (() => {{
-            const buttons = Array.from(document.querySelectorAll('a[role="button"], button, a'));
-            const targetBtn = buttons.find(el => el.textContent.trim() === '{target_page}' && !el.getAttribute('data-is-clone'));
+            const buttons = Array.from(document.querySelectorAll('a[role="button"], button, a, [class*="paginator"], [class*="pagination"]'));
+            // 1. 목표 페이지 번호 버튼 직접 검색
+            let targetBtn = buttons.find(el => el.textContent.trim() === '{target_page}' && !el.getAttribute('data-is-clone'));
+            
+            // 2. 만약 해당 페이지 번호가 없으면 '다음' 버튼 검색 (10p->11p, 20p->21p 등 페이징 블록 전환)
+            if (!targetBtn) {{
+                targetBtn = buttons.find(el => {{
+                    const txt = el.textContent.trim();
+                    const aria = el.getAttribute('aria-label') || '';
+                    const cls = el.className || '';
+                    const title = el.getAttribute('title') || '';
+                    return (txt === '다음' || txt === '다음페이지' || aria.includes('다음') || title.includes('다음') || cls.includes('btn_next') || cls.includes('next')) && !el.getAttribute('data-is-clone');
+                }});
+            }}
+
             if (!targetBtn) return {{ success: false, reason: 'not_found' }};
 
             const clone = targetBtn.cloneNode(true);
@@ -90,8 +110,17 @@ class DOMNavigator:
             # 차선책: DOM 직접 클릭
             fallback_js = f"""
             (() => {{
-                const buttons = Array.from(document.querySelectorAll('a[role="button"], button, a'));
-                const targetBtn = buttons.find(el => el.textContent.trim() === '{target_page}');
+                const buttons = Array.from(document.querySelectorAll('a[role="button"], button, a, [class*="paginator"], [class*="pagination"]'));
+                let targetBtn = buttons.find(el => el.textContent.trim() === '{target_page}');
+                if (!targetBtn) {{
+                    targetBtn = buttons.find(el => {{
+                        const txt = el.textContent.trim();
+                        const aria = el.getAttribute('aria-label') || '';
+                        const cls = el.className || '';
+                        const title = el.getAttribute('title') || '';
+                        return (txt === '다음' || txt === '다음페이지' || aria.includes('다음') || title.includes('다음') || cls.includes('btn_next') || cls.includes('next'));
+                    }});
+                }}
                 if (targetBtn) {{
                     targetBtn.click();
                     return true;
@@ -100,14 +129,14 @@ class DOMNavigator:
             }})()
             """
             success = await page.evaluate(fallback_js)
-            await asyncio.sleep(1.8)
+            await asyncio.sleep(2.0)
             return success
 
         logger.info("   ✔ 복제 상태: [네이버 실제 DOM 원형 복제] -> 마우스 물리 클릭")
         await asyncio.sleep(0.3)
-        await page.click('a[data-is-clone="true"], button[data-is-clone="true"]', force=True)
+        await page.click('a[data-is-clone="true"], button[data-is-clone="true"], [data-is-clone="true"]', force=True)
         
         # 복제 엘리먼트 정리
         await page.evaluate("() => { document.querySelectorAll('[data-is-clone=\"true\"]').forEach(el => el.remove()); }")
-        await asyncio.sleep(1.8)
+        await asyncio.sleep(2.0)
         return True

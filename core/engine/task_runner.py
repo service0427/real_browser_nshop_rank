@@ -69,7 +69,7 @@ class TaskRunner:
             crawl_res = await crawl_shopping_rank_async(
                 keyword=keyword,
                 target_id=target_id,
-                max_pages=10,
+                max_pages=25,
                 port=port,
                 headless=headless,
                 use_keyword_cache=use_keyword_cache,

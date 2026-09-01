@@ -11,6 +11,7 @@ from playwright.async_api import async_playwright
 from core.logger import get_logger
 from services.profile_pool import ProfilePoolManager
 from services.keyword_cache import keyword_cache_mgr
+from services.rank_logger import RankLogger
 from services.crawler.browser_process import BrowserProcessManager
 from services.crawler.cdp_controller import CDPController
 from services.crawler.dom_navigator import DOMNavigator
@@ -22,14 +23,14 @@ logger = get_logger("crawler.pipeline")
 async def crawl_shopping_rank_async(
     keyword: str,
     target_id: str,
-    max_pages: int = 10,
+    max_pages: int = 25,
     port: int = 9201,
     headless: bool = False,
     use_keyword_cache: bool = False,
     profile_mgr: Optional[ProfilePoolManager] = None
 ) -> Dict[str, Any]:
     """
-    모듈화된 통합 쇼핑 순위 수집기 (0.0001초 캐시 조회 -> 모바일 통검 -> 10p 페이징 완주)
+    모듈화된 통합 쇼핑 순위 수집기 (0.0001초 캐시 조회 -> 모바일 통검 -> 25p 페이징 완주)
     """
     start_time = time.time()
 
@@ -72,12 +73,12 @@ async def crawl_shopping_rank_async(
     try:
         async with async_playwright() as p:
             browser = None
-            for _ in range(5):
+            for _ in range(15):
                 try:
                     browser = await p.chromium.connect_over_cdp(f"http://127.0.0.1:{port}", timeout=5000)
                     break
                 except Exception:
-                    await asyncio.sleep(0.6)
+                    await asyncio.sleep(0.8)
             if not browser:
                 raise RuntimeError(f"Chrome CDP connection timed out on port {port}")
 
@@ -88,54 +89,110 @@ async def crawl_shopping_rank_async(
             cdp_ctrl = CDPController(page)
             await cdp_ctrl.setup_session()
 
-            # 5. 모바일 통합검색 진입
+            # 5. 모바일 통합검색 진입 및 1페이지 수집
             await DOMNavigator.navigate_to_search(page, keyword)
+            await asyncio.sleep(2.0)
 
-            # 6. 1페이지 ~ 10페이지 순회
-            for current_page in range(1, max_pages + 1):
-                if current_page > 1:
-                    nav_ok = await DOMNavigator.click_next_page(page, current_page)
-                    if not nav_ok:
-                        break
+            # 1페이지 SSR __NEXT_DATA__ 파싱
+            nd1 = await DataExtractor.extract_next_data(page)
+            build_id = nd1.get("buildId") if nd1 else None
+            p1_products, p1_ad_cnt = DataExtractor.parse_products_from_next_data(nd1) if nd1 else ([], 0)
 
-                next_data = None
-                for _ in range(2):
-                    next_data = await DataExtractor.extract_next_data(page)
-                    if next_data:
-                        break
-                    await asyncio.sleep(1.0)
-
-                if not next_data:
-                    logger.warning(f"[{current_page}페이지] NEXT_DATA 미검출 -> 차단 의심")
-                    break
-
-                page_products, ad_cnt = DataExtractor.parse_products_from_next_data(next_data)
-                logger.info(f"✔ [{current_page}페이지 수집 성공] {len(all_organic_products)+1}위 ~ {len(all_organic_products)+len(page_products)}위 ({len(page_products)}개 오가닉, 광고 {ad_cnt}개)")
-
-                # 타겟 상품 실시간 매칭
-                for idx, item in enumerate(page_products):
-                    current_rank = len(all_organic_products) + idx + 1
+            if p1_products:
+                logger.info(f"✔ [1페이지 수집 성공] 1위 ~ {len(p1_products)}위 ({len(p1_products)}개 오가닉, 광고 {p1_ad_cnt}개)")
+                for idx, item in enumerate(p1_products):
+                    current_rank = idx + 1
                     match_res = DataExtractor.match_target(item, target_id)
                     if match_res:
                         matched_val, matched_field = match_res
                         target_found = True
                         target_rank = current_rank
-                        target_page = current_page
+                        target_page = 1
                         target_product = DataExtractor.format_product_info(item, matched_val)
                         logger.info(f"★ 타겟 상품 발견: #{target_rank}위 ({target_product.get('productName')}) -> 즉시 조기 종료")
                         break
+                all_organic_products.extend(p1_products)
 
-                all_organic_products.extend(page_products)
-                if target_found or len(page_products) < 10:
-                    break
+            # 6. 2페이지 ~ 25페이지(최대 1000위) 순차 수집 (Next.js Data API + 스마트 세션 갱신)
+            if not target_found and max_pages > 1 and all_organic_products:
+                import urllib.parse
+                encoded_kw = urllib.parse.quote(keyword)
+                await asyncio.sleep(1.5)  # 1페이지 완료 후 안정화 딜레이
+
+                for current_page in range(2, max_pages + 1):
+                    data_url = f"/_next/data/{build_id}/search/all.json?query={encoded_kw}&pagingIndex={current_page}&pagingSize=40"
+                    
+                    page_products = []
+                    ad_cnt = 0
+                    
+                    for attempt in range(3):
+                        fetch_res = await page.evaluate("""async (url) => {
+                            try {
+                                const r = await window.fetch(url, {
+                                    method: 'GET',
+                                    headers: { 'x-nextjs-data': '1', 'accept': '*/*' },
+                                    credentials: 'include'
+                                });
+                                if (r.status === 200) return { status: 200, json: await r.json() };
+                                return { status: r.status };
+                            } catch(e) { return { err: e.message }; }
+                        }""", data_url)
+
+                        if fetch_res.get("status") == 200:
+                            page_products, ad_cnt = DataExtractor.parse_products_from_next_data(fetch_res.get("json", {}))
+                            if page_products:
+                                break
+                        
+                        # 418 또는 실패 시 브라우저 세션 재갱신
+                        logger.info(f"🔄 [{current_page}페이지] 세션 갱신 및 재시도 (시도 {attempt+1}/3, status: {fetch_res.get('status')})")
+                        await DOMNavigator.navigate_to_search(page, keyword)
+                        await asyncio.sleep(2.5)
+                        
+                        nd_refresh = await DataExtractor.extract_next_data(page)
+                        if nd_refresh and nd_refresh.get("buildId"):
+                            build_id = nd_refresh.get("buildId")
+                        data_url = f"/_next/data/{build_id}/search/all.json?query={encoded_kw}&pagingIndex={current_page}&pagingSize=40"
+                        await asyncio.sleep(1.5)
+
+                    if not page_products:
+                        logger.warning(f"[{current_page}페이지] 상품 목록 비어있음 또는 수집 종료")
+                        break
+
+                    logger.info(f"✔ [{current_page}페이지 수집 성공] {len(all_organic_products)+1}위 ~ {len(all_organic_products)+len(page_products)}위 ({len(page_products)}개 오가닉, 광고 {ad_cnt}개)")
+
+                    # 타겟 상품 실시간 매칭
+                    for idx, item in enumerate(page_products):
+                        current_rank = len(all_organic_products) + idx + 1
+                        match_res = DataExtractor.match_target(item, target_id)
+                        if match_res:
+                            matched_val, matched_field = match_res
+                            target_found = True
+                            target_rank = current_rank
+                            target_page = current_page
+                            target_product = DataExtractor.format_product_info(item, matched_val)
+                            logger.info(f"★ 타겟 상품 발견: #{target_rank}위 ({target_product.get('productName')}) -> 즉시 조기 종료")
+                            break
+
+                    all_organic_products.extend(page_products)
+                    target_page = current_page
+
+                    if target_found or len(page_products) < 10:
+                        break
+
+                    await asyncio.sleep(1.0)
 
             await context.close()
 
-        # 7. 캐시 저장
+        # 7. 순위 목록 파일 라인별 저장 (순위 | MID | 제목)
+        rank_file_path = ""
+        if all_organic_products:
+            rank_file_path = RankLogger.save_keyword_ranks(keyword, all_organic_products)
+
+        # 8. 캐시 저장
         if use_keyword_cache and all_organic_products:
             keyword_cache_mgr.update(keyword, all_organic_products, max_page_crawled=target_page)
 
-        # 8. 자가치유 프로필 보고
+        # 9. 자가치유 프로필 보고
         if profile_mgr:
             profile_mgr.report_result(profile_id, success=bool(all_organic_products), is_login_or_block=not bool(all_organic_products))
 
@@ -147,6 +204,8 @@ async def crawl_shopping_rank_async(
             "targetProduct": target_product,
             "matchedFieldName": matched_field,
             "pagesCrawled": target_page,
+            "rankFilePath": rank_file_path,
+            "totalProductsCrawled": len(all_organic_products),
             "bytesReceived": cdp_ctrl.total_bytes if cdp_ctrl else 0,
             "kbReceived": cdp_ctrl.total_kb if cdp_ctrl else 0.0,
             "engine": "Modular_CDP_RealBrowser",

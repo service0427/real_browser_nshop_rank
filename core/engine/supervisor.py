@@ -146,8 +146,8 @@ class ClusterSupervisor:
             # 빈 큐인 경우
             if res is None:
                 self.worker_last_status[worker_id] = "IDLE"
-                logger.info(f"💤 [W{worker_id}] 작업이 없습니다. 서버 부하 방지를 위해 10초간 대기합니다.")
-                await asyncio.sleep(10.0)
+                logger.info(f"💤 [W{worker_id}] 작업이 없습니다. 서버 부하 방지를 위해 30초간 대기합니다.")
+                await asyncio.sleep(30.0)
                 continue
 
             # In-Flight 즉시 재할당된 경우 통계 건너뜀

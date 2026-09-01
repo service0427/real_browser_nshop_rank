@@ -30,6 +30,16 @@ class BrowserProcessManager:
         os.makedirs(cache_dir, exist_ok=True)
 
         user_dir = profile_path or os.path.join(BASE_DIR, "services", "runtime", "master_profile")
+        os.makedirs(user_dir, exist_ok=True)
+
+        # 이전 충돌이나 비정상 종료로 남은 Singleton 락 파일 청소
+        for lock_name in ["SingletonLock", "SingletonCookie", "SingletonSocket"]:
+            lock_path = os.path.join(user_dir, lock_name)
+            if os.path.islink(lock_path) or os.path.exists(lock_path):
+                try:
+                    os.unlink(lock_path)
+                except Exception:
+                    pass
 
         chrome_cmd = [
             "/usr/bin/google-chrome",

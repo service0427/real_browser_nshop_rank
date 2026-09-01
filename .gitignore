@@ -12,10 +12,12 @@ venv/
 .env
 
 # Dynamic Runtime Data
+services/runtime/master_profile/
 services/runtime/profiles/
 services/runtime/keyword_cache/
 services/runtime/browser_cache/
 services/runtime/logs/
+services/runtime/rank_logs/
 
 # IDE
 .idea/

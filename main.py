@@ -4,9 +4,9 @@
 Naver Organic Ranking Unified CLI, Worker & Daemon Entrypoint (Shop & Place).
 
 Usage Examples:
-1. Shopping Rank (Real Chrome Nest Hub SSR, 1~10 Pages / 400 Ranks):
+1. Shopping Rank (Real Chrome Nest Hub SSR, 1~25 Pages / 1000 Ranks):
    python main.py shop --keyword "노트북" --target 52631236642
-   python main.py shop --keyword "무선이어폰" --maxpage 10
+   python main.py shop --keyword "무선이어폰" --maxpage 25
 
 2. TechB Distributed Task Queue Worker (API_PARTNER_GUIDE.md):
    python main.py worker --service shop --loop 5
@@ -23,11 +23,16 @@ import os
 import sys
 
 # [자동 가상환경 감지 및 전환] 사용자가 어떤 python으로 실행하든 전용 venv로 자동 실행
-VENV_PYTHON = os.path.expanduser("~/venv/bin/python3")
-if os.path.exists(VENV_PYTHON) and os.path.abspath(sys.executable) != os.path.abspath(VENV_PYTHON):
-    os.execv(VENV_PYTHON, [VENV_PYTHON] + sys.argv)
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+VENV_CANDIDATES = [
+    os.path.join(SCRIPT_DIR, "venv", "bin", "python3"),
+    os.path.expanduser("~/venv/bin/python3"),
+]
+for venv_py in VENV_CANDIDATES:
+    if os.path.exists(venv_py) and os.path.abspath(sys.executable) != os.path.abspath(venv_py):
+        os.execv(venv_py, [venv_py] + sys.argv)
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, SCRIPT_DIR)
 
 import argparse
 from config.settings import TASK_QUEUE_SERVER, API_PORT
@@ -50,6 +55,8 @@ def handle_shop(args):
     print(f"Engine          : {result.get('engine')}")
     print(f"Elapsed Time    : {result.get('elapsedSec', 0):.2f}s")
     print(f"Pages Crawled   : {result.get('pagesCrawled', 0)} pages")
+    print(f"Total Products  : {result.get('totalProductsCrawled', 0)} items")
+    print(f"Rank List File  : {result.get('rankFilePath', 'N/A')}")
     print(f"Traffic (KB)    : {result.get('kbReceived', 0.0):.2f} KB")
 
     if args.target:
@@ -126,7 +133,7 @@ def main():
     p_shop = subparsers.add_parser("shop", help="Real-time shopping rank query")
     p_shop.add_argument("--keyword", "-k", required=True, help="Search keyword")
     p_shop.add_argument("--target", "-t", default=None, help="Target product nvMid or channelProductId")
-    p_shop.add_argument("--maxpage", "-m", type=int, default=10, help="Max pages (default: 10 / 400 ranks)")
+    p_shop.add_argument("--maxpage", "-m", type=int, default=25, help="Max pages (default: 25 / 1000 ranks)")
     p_shop.add_argument("--headless", action="store_true", help="Run browser in headless mode")
 
     # 2. Worker Command (TechB Task Queue Client)
@@ -136,7 +143,7 @@ def main():
     p_worker.add_argument("--server", default=None, help=f"Task queue server URL (default: {TASK_QUEUE_SERVER})")
     p_worker.add_argument("--interval", "-i", type=int, default=5, help="Polling interval in seconds (default: 5)")
     p_worker.add_argument("--lease", "-l", type=int, default=300, help="Lease lock seconds (default: 300)")
-    p_worker.add_argument("--maxpage", "-m", type=int, default=10, help="Max search pages (default: 10 / 400 ranks)")
+    p_worker.add_argument("--maxpage", "-m", type=int, default=25, help="Max search pages (default: 25 / 1000 ranks)")
     p_worker.add_argument("--headless", action="store_true", help="Run browser in headless mode")
 
     # 3. Place Command

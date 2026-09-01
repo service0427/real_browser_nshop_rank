@@ -39,7 +39,7 @@ class DataExtractor:
         ad_count = 0
 
         try:
-            props = next_data.get("props", {}).get("pageProps", {})
+            props = next_data.get("pageProps") or next_data.get("props", {}).get("pageProps", {})
             
             raw_products = []
             if isinstance(props.get("compositeProducts"), dict):

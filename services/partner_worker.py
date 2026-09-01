@@ -131,9 +131,9 @@ class TechBPartnerWorker:
             logger.error(f"[Return] Task #{task_id} 결과 전송 실패: {e}")
             return {"success": False, "error": str(e)}
 
-    async def execute_task(self, task: Dict[str, Any], max_pages: int = 10, headless: bool = False) -> Dict[str, Any]:
+    async def execute_task(self, task: Dict[str, Any], max_pages: int = 25, headless: bool = False) -> Dict[str, Any]:
         """
-        단일 태스크 처리 파이프라인 (기본 10페이지 / 400위)
+        단일 태스크 처리 파이프라인 (기본 25페이지 / 1000위)
         """
         task_id = task.get("task_id")
         keyword = task.get("keyword")
@@ -203,12 +203,12 @@ class TechBPartnerWorker:
         self,
         service: str = "shop",
         poll_interval: int = 5,
-        max_pages: int = 10,
+        max_pages: int = 25,
         headless: bool = False,
         max_loops: Optional[int] = None
     ):
         """
-        프로덕션 무인 워커 루프 (기본 10페이지 / 400위)
+        프로덕션 무인 워커 루프 (기본 25페이지 / 1000위)
         """
         logger.info(f"==========================================================")
         logger.info(f"🚀 TechB 실서비스 분산 태스크 큐 워커 구동 시작")
@@ -216,7 +216,7 @@ class TechBPartnerWorker:
         logger.info(f"• 대상 서비스   : {service.upper()}")
         logger.info(f"• 최대 반복 횟수: {'무한 루프' if max_loops is None else f'{max_loops}회 제한'}")
         logger.info(f"• 폴링 주기     : {poll_interval}초")
-        logger.info(f"• 탐색 최대 깊이: {max_pages}페이지 (최대 400위)")
+        logger.info(f"• 탐색 최대 깊이: {max_pages}페이지 (최대 1000위)")
         logger.info(f"• 차단 방어 룰  : 차단 감지 시 즉시 전체 사이클 완전 종료")
         logger.info(f"==========================================================")
 
