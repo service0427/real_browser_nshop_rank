@@ -15,10 +15,19 @@ cd "$SCRIPT_DIR"
 # 기본값: 4쓰레드 (권장: 4 또는 8)
 THREADS="${1:-4}"
 
-# 화면 환경변수 자동 감지
+# 화면 환경변수 자동 감지 (Wayland / X11 / XAUTHORITY)
 export DISPLAY="${DISPLAY:-:0}"
 export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}"
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+
+MUTTER_AUTH=$(ls -t "/run/user/$(id -u)/.mutter-Xwaylandauth."* 2>/dev/null | head -n 1)
+if [ -n "$MUTTER_AUTH" ]; then
+    export XAUTHORITY="$MUTTER_AUTH"
+elif [ -f "$HOME/.Xauthority" ]; then
+    export XAUTHORITY="$HOME/.Xauthority"
+fi
+
+xhost +local: 2>/dev/null || true
 
 # 24시간 화면 켜짐 유지 (화면 꺼짐 및 스크린세이버 방지)
 xset s off -dpms 2>/dev/null || true

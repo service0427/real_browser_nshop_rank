@@ -18,6 +18,7 @@ if BASE_DIR not in sys.path:
 
 from core.logger import get_logger
 from services.profile_pool import ProfilePoolManager
+from services.keyword_cache import keyword_cache_mgr
 try:
     from services.infra.ip_toggle import ip_toggle_mgr
 except ImportError:

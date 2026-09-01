@@ -49,6 +49,8 @@ class BrowserProcessManager:
             "--disk-cache-size=1073741824",  # 1GB 캐시
             "--no-first-run",
             "--no-default-browser-check",
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
             "--disable-session-crashed-bubble",
             "--hide-crash-restore-bubble",
             "--disable-infobars"
@@ -57,14 +59,24 @@ class BrowserProcessManager:
         if headless:
             chrome_cmd.append("--headless=new")
 
-        # GUI 데스크톱 환경변수 명시적 주입 (Wayland / X11)
+        # GUI 데스크톱 환경변수 명시적 주입 (Wayland / X11 / XAUTHORITY)
         chrome_env = os.environ.copy()
+        uid = os.getuid()
         if "DISPLAY" not in chrome_env or not chrome_env["DISPLAY"]:
             chrome_env["DISPLAY"] = ":0"
         if "WAYLAND_DISPLAY" not in chrome_env or not chrome_env["WAYLAND_DISPLAY"]:
             chrome_env["WAYLAND_DISPLAY"] = "wayland-0"
         if "XDG_RUNTIME_DIR" not in chrome_env or not chrome_env["XDG_RUNTIME_DIR"]:
-            chrome_env["XDG_RUNTIME_DIR"] = f"/run/user/{os.getuid()}"
+            chrome_env["XDG_RUNTIME_DIR"] = f"/run/user/{uid}"
+
+        # Mutter/Xwayland 권한 파일 자동 감지 및 주입
+        if "XAUTHORITY" not in chrome_env or not chrome_env["XAUTHORITY"]:
+            import glob
+            mutter_auths = glob.glob(f"/run/user/{uid}/.mutter-Xwaylandauth.*")
+            if mutter_auths:
+                chrome_env["XAUTHORITY"] = mutter_auths[0]
+            elif os.path.exists(os.path.expanduser("~/.Xauthority")):
+                chrome_env["XAUTHORITY"] = os.path.expanduser("~/.Xauthority")
 
         proc = subprocess.Popen(
             chrome_cmd,
