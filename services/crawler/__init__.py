@@ -24,7 +24,7 @@ logger = get_logger("crawler.pipeline")
 async def crawl_shopping_rank_async(
     keyword: str,
     target_id: str,
-    max_pages: int = 25,
+    max_pages: int = 5,
     port: int = 9201,
     headless: bool = False,
     use_keyword_cache: bool = False,
@@ -32,7 +32,7 @@ async def crawl_shopping_rank_async(
     active_workers: int = 1
 ) -> Dict[str, Any]:
     """
-    모듈화된 통합 쇼핑 순위 수집기 (0.0001초 캐시 조회 -> 모바일 통검 -> 25p 페이징 완주)
+    모듈화된 통합 쇼핑 순위 수집기 (0.0001초 캐시 조회 -> 모바일 통검 -> 5p / 200위 페이징 완주)
     """
     start_time = time.time()
 

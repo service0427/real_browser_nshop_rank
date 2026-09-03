@@ -46,6 +46,7 @@ class TechBPartnerWorker:
         """
         params = urllib.parse.urlencode({
             "service": service,
+            "worker": "pc",
             "lease_seconds": self.lease_seconds
         })
         url = f"{self.lease_endpoint}?{params}"
@@ -169,7 +170,7 @@ class TechBPartnerWorker:
                         product=target_product
                     )
                 else:
-                    logger.info(f"★ [Task #{task_id}] 탐색 완료 (1~{max_pages}페이지 밖 / 0위 확정)")
+                    logger.info(f"★ [Task #{task_id}] 탐색 완료 (1~{max_pages}페이지 밖 / 200위 밖 0위 확정)")
                     self.return_task_result(
                         task_id=task_id,
                         service=service,
@@ -204,12 +205,12 @@ class TechBPartnerWorker:
         self,
         service: str = "shop",
         poll_interval: int = 5,
-        max_pages: int = 25,
+        max_pages: int = 5,
         headless: bool = False,
         max_loops: Optional[int] = None
     ):
         """
-        프로덕션 무인 워커 루프 (기본 25페이지 / 1000위)
+        프로덕션 무인 워커 루프 (기본 5페이지 / 200위)
         """
         logger.info(f"==========================================================")
         logger.info(f"🚀 TechB 실서비스 분산 태스크 큐 워커 구동 시작")

@@ -180,7 +180,7 @@ def main():
     p_shop = subparsers.add_parser("shop", help="Real-time shopping rank query")
     p_shop.add_argument("--keyword", "-k", required=True, help="Search keyword")
     p_shop.add_argument("--target", "-t", default=None, help="Target product nvMid or channelProductId")
-    p_shop.add_argument("--maxpage", "-m", type=int, default=25, help="Max pages (default: 25 / 1000 ranks)")
+    p_shop.add_argument("--maxpage", "-m", type=int, default=5, help="Max pages (default: 5 / 200 ranks)")
     p_shop.add_argument("--headless", action="store_true", help="Run browser in headless mode")
 
     # 2. Worker Command (TechB Task Queue Client)
@@ -190,7 +190,7 @@ def main():
     p_worker.add_argument("--server", default=None, help=f"Task queue server URL (default: {TASK_QUEUE_SERVER})")
     p_worker.add_argument("--interval", "-i", type=int, default=5, help="Polling interval in seconds (default: 5)")
     p_worker.add_argument("--lease", "-l", type=int, default=300, help="Lease lock seconds (default: 300)")
-    p_worker.add_argument("--maxpage", "-m", type=int, default=25, help="Max search pages (default: 25 / 1000 ranks)")
+    p_worker.add_argument("--maxpage", "-m", type=int, default=5, help="Max search pages (default: 5 / 200 ranks)")
     p_worker.add_argument("--headless", action="store_true", help="Run browser in headless mode")
 
     # 3. Place Command
