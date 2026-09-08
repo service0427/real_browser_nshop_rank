@@ -1,6 +1,7 @@
 import json
 import os
 import shutil
+import sqlite3
 import time
 from typing import Dict, Any, List, Optional
 from core.logger import get_logger
@@ -14,7 +15,7 @@ COOLDOWN_SECONDS = 900  # 로그인/차단 시 15분간 숙성 쿨다운
 
 
 def clean_profile_crash_state(profile_dir: str):
-    """프로필 복원 팝업 제거 및 exit_type 정상화"""
+    """프로필 복원 팝업 제거, exit_type 정상화 및 로그인 유발 쿠키 정제"""
     for sub in ["Default", ""]:
         pref_file = os.path.join(profile_dir, sub, "Preferences") if sub else os.path.join(profile_dir, "Preferences")
         if os.path.exists(pref_file):
@@ -24,10 +25,29 @@ def clean_profile_crash_state(profile_dir: str):
                 if "profile" in data:
                     data["profile"]["exit_type"] = "Normal"
                     data["profile"]["exited_cleanly"] = True
+                if "translate" not in data:
+                    data["translate"] = {}
+                data["translate"]["enabled"] = False
+                data["translate_whitelists"] = {"ko": "ko"}
+                if "intl" not in data:
+                    data["intl"] = {}
+                data["intl"]["accept_languages"] = "ko-KR,ko,en-US,en"
                 with open(pref_file, "w", encoding="utf-8") as f:
                     json.dump(data, f)
             except Exception:
                 pass
+
+    # 로그인 창(nidlogin.login) 유발 원인 차단: .nid.naver.com 및 불완전 NID 세션 쿠키 자동 정제
+    cookie_file = os.path.join(profile_dir, "Default", "Cookies")
+    if os.path.exists(cookie_file):
+        try:
+            conn = sqlite3.connect(cookie_file)
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM cookies WHERE host_key LIKE '%nid.naver.com%' OR name IN ('NID_JST', 'nid_slevel', 'NID_AUT', 'NID_SES')")
+            conn.commit()
+            conn.close()
+        except Exception:
+            pass
 
 
 class ProfilePoolManager:

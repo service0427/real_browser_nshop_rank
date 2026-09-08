@@ -8,7 +8,7 @@ import urllib.parse
 from typing import Dict, Any, Optional
 
 from core.logger import get_logger
-from config.settings import TASK_QUEUE_SERVER, DEFAULT_LEASE_SECONDS
+from config.settings import TASK_QUEUE_SERVER
 from services.crawler import crawl_shopping_rank_async
 
 logger = get_logger("rank.partner.worker")
@@ -33,21 +33,20 @@ class TechBPartnerWorker:
     TechB 분산 태스크 큐 워커 클라이언트 (API_PARTNER_GUIDE.md 스펙 100% 호환)
     """
 
-    def __init__(self, server_url: str = TASK_QUEUE_SERVER, lease_seconds: int = DEFAULT_LEASE_SECONDS):
+    def __init__(self, server_url: str = TASK_QUEUE_SERVER):
         self.server_url = server_url.rstrip("/")
-        self.lease_seconds = lease_seconds
         self.lease_endpoint = f"{self.server_url}/api/v1/task"
         self.return_endpoint = f"{self.server_url}/api/v1/task/return"
 
-    def fetch_task(self, service: str = "shop") -> Optional[Dict[str, Any]]:
+    def fetch_task(self, service: str = "shop", worker: str = "mobile") -> Optional[Dict[str, Any]]:
         """
         1. 작업 가져오기 (Task Lease)
-        GET /api/v1/task?service=shop&lease_seconds=300
+        GET /api/v1/task?service=shop&worker=pc
+        GET /api/v1/task?service=shop&worker=mobile
         """
         params = urllib.parse.urlencode({
             "service": service,
-            "worker": "pc",
-            "lease_seconds": self.lease_seconds
+            "worker": worker
         })
         url = f"{self.lease_endpoint}?{params}"
 
@@ -70,7 +69,8 @@ class TechBPartnerWorker:
     def return_task_result(
         self,
         task_id: int,
-        service: str,
+        service: str = "shop",
+        worker: str = "mobile",
         rank: Optional[int] = None,
         product: Optional[Dict[str, Any]] = None,
         is_blocked: bool = False,
@@ -78,19 +78,21 @@ class TechBPartnerWorker:
     ) -> Dict[str, Any]:
         """
         2. 순위 결과 제출 및 오류 반환 (Task Return)
-        POST /api/v1/task/return
+        POST /api/v1/task/return (AGENTS.md 명세 준수)
         """
         payload: Dict[str, Any] = {
             "task_id": task_id,
-            "service": service
+            "service": service,
+            "worker": worker
         }
 
-        # Case 3: 차단 / 오류 발생 시
+        # Case 4: 클라이언트 차단 / 에러 발생 시 (Re-queue)
         if is_blocked or error_message:
             payload["status"] = "BLOCKED"
             payload["error_message"] = error_message or "차단 또는 알 수 없는 오류 발생"
-        # Case 1: 순위 포착 (정상 발견)
-        elif rank and rank > 0 and product:
+            payload.pop("worker", None)
+        # Case 1: 순위 포착 (1 ~ 1,000위 발견 시)
+        elif rank and 0 < rank <= 1000 and product:
             payload["rank"] = rank
             payload["product"] = {
                 "productName": product.get("productName") or product.get("productTitle") or "",
@@ -103,9 +105,12 @@ class TechBPartnerWorker:
                 "brand": product.get("brand") or "",
                 "category": product.get("category") or ""
             }
-        # Case 2: 순위권 밖 (정상 0위 확정)
-        else:
+        # Case 2: 2단계 PC 워커 200위 밖 (3단계 실기기 대기 유지 -> rank: 0)
+        elif worker == "pc" and (rank == 0 or rank is None or rank > 200):
             payload["rank"] = 0
+        # Case 3: 3단계 완전 실기기 1,000위 밖 (최종 0위 확정 검수 완료 -> rank: 1001)
+        else:
+            payload["rank"] = 1001
 
         # 전송할 요청 JSON 콘솔 출력 (jq 형식)
         print_jq(f"POST {self.return_endpoint}", payload, is_request=True)
@@ -145,15 +150,26 @@ class TechBPartnerWorker:
         use_keyword_cache = (keyword_total_count >= 2)
         logger.info(f"▶ [Task #{task_id}] 작업 시작: 키워드='{keyword}', 타겟='{target_id}', 큐내동일키워드수={keyword_total_count} (캐시저장: {'ON' if use_keyword_cache else 'OFF'})")
 
+        stage = int(task.get("stage", 2))
+        effective_max_pages = task.get("max_pages", 5 if stage == 2 else max_pages)
+
         try:
-            crawl_res = await crawl_shopping_rank_async(
-                keyword=keyword,
-                target_id=target_id,
-                max_pages=max_pages,
-                headless=headless,
-                use_keyword_cache=use_keyword_cache,
-                active_workers=1
-            )
+            if stage == 3:
+                from services.phone_farm import crawl_phone_rank_async
+                crawl_res = await crawl_phone_rank_async(
+                    keyword=keyword,
+                    target_id=target_id,
+                    max_pages=effective_max_pages
+                )
+            else:
+                crawl_res = await crawl_shopping_rank_async(
+                    keyword=keyword,
+                    target_id=target_id,
+                    max_pages=effective_max_pages,
+                    headless=headless,
+                    use_keyword_cache=use_keyword_cache,
+                    active_workers=1
+                )
 
             # 정상 완료 (200 OK)
             if crawl_res.get("status") == 200:
@@ -170,7 +186,7 @@ class TechBPartnerWorker:
                         product=target_product
                     )
                 else:
-                    logger.info(f"★ [Task #{task_id}] 탐색 완료 (1~{max_pages}페이지 밖 / 200위 밖 0위 확정)")
+                    logger.info(f"★ [Task #{task_id}] 탐색 완료 (1~{max_pages}페이지 밖 / 0위 확정)")
                     self.return_task_result(
                         task_id=task_id,
                         service=service,
@@ -204,18 +220,19 @@ class TechBPartnerWorker:
     async def run_worker_loop(
         self,
         service: str = "shop",
+        worker: str = "mobile",
         poll_interval: int = 5,
-        max_pages: int = 5,
+        max_pages: int = 25,
         headless: bool = False,
         max_loops: Optional[int] = None
     ):
         """
-        프로덕션 무인 워커 루프 (기본 5페이지 / 200위)
+        프로덕션 무인 워커 루프 (기본 25페이지 / 1000위)
         """
         logger.info(f"==========================================================")
         logger.info(f"🚀 TechB 실서비스 분산 태스크 큐 워커 구동 시작")
         logger.info(f"• 태스크 서버   : {self.server_url}")
-        logger.info(f"• 대상 서비스   : {service.upper()}")
+        logger.info(f"• 대상 서비스   : {service.upper()} (Worker: {worker})")
         logger.info(f"• 최대 반복 횟수: {'무한 루프' if max_loops is None else f'{max_loops}회 제한'}")
         logger.info(f"• 폴링 주기     : {poll_interval}초")
         logger.info(f"• 탐색 최대 깊이: {max_pages}페이지 (최대 1000위)")
@@ -226,7 +243,7 @@ class TechBPartnerWorker:
 
         while True:
             try:
-                task = self.fetch_task(service=service)
+                task = self.fetch_task(service=service, worker=worker)
                 if task:
                     result = await self.execute_task(task, max_pages=max_pages, headless=headless)
                     

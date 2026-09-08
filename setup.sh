@@ -45,6 +45,8 @@ sudo apt-get install -y \
     psmisc \
     jq \
     unzip \
+    adb \
+    libusb-1.0-0 \
     libnss3 \
     libgbm1 \
     $ASOUND_PKG
@@ -52,6 +54,15 @@ sudo apt-get install -y \
 # 한글 폰트 패키지 설치 (OS 릴리즈별 가용 폰트 자동 적용)
 sudo apt-get install -y fonts-nanum fonts-noto-cjk 2>/dev/null || true
 sudo apt-get install -y fonts-nanum-coding fonts-nanum-extra 2>/dev/null || true
+
+# Android USB udev 규칙 설정 (루팅폰 및 실기기 USB 디버깅 퍼미션 오류 방지)
+if [ ! -f /etc/udev/rules.d/51-android.rules ]; then
+    echo -e "${BLUE}📱 Android USB udev 규칙 설정 중...${NC}"
+    echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="*", MODE="0666", GROUP="plugdev"' | sudo tee /etc/udev/rules.d/51-android.rules > /dev/null
+    sudo udevadm control --reload-rules 2>/dev/null || true
+    sudo udevadm trigger 2>/dev/null || true
+    sudo usermod -aG plugdev "$USER" 2>/dev/null || true
+fi
 
 # 2. 구글 공식 Chrome 브라우저 설치 확인 및 설치
 echo -e "\n${BLUE}🌐 [2/6] Google Chrome 브라우저 설치 확인 중...${NC}"

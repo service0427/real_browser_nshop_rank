@@ -10,7 +10,6 @@ API_PORT = int(os.getenv("API_PORT", 9003))
 
 # TechB Task Queue Server Configuration
 TASK_QUEUE_SERVER = os.getenv("TASK_QUEUE_SERVER", "http://114.207.112.172:9003")
-DEFAULT_LEASE_SECONDS = int(os.getenv("DEFAULT_LEASE_SECONDS", 300))
 
 # Database Configurations
 DB_HOST = os.getenv("DB_HOST", "127.0.0.1")

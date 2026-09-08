@@ -39,14 +39,24 @@ from config.settings import TASK_QUEUE_SERVER, API_PORT
 
 
 def handle_shop(args):
-    from services.crawler import crawl_shopping_rank_async
     import asyncio
-    result = asyncio.run(crawl_shopping_rank_async(
-        keyword=args.keyword,
-        target_id=args.target,
-        max_pages=args.maxpage,
-        headless=args.headless
-    ))
+    stage = getattr(args, "stage", 2)
+
+    if stage == 3:
+        from services.phone_farm import crawl_phone_rank_async
+        result = asyncio.run(crawl_phone_rank_async(
+            keyword=args.keyword,
+            target_id=args.target,
+            max_pages=args.maxpage
+        ))
+    else:
+        from services.pc_browser import crawl_pc_rank_async
+        result = asyncio.run(crawl_pc_rank_async(
+            keyword=args.keyword,
+            target_id=args.target,
+            max_pages=args.maxpage,
+            headless=args.headless
+        ))
     print("\n" + "=" * 80)
     print("SHOP RANKING RESULT:")
     print("=" * 80)
@@ -78,10 +88,11 @@ def handle_shop(args):
 
 
 def handle_worker(args):
-    threads = getattr(args, "threads", 4)
+    threads = getattr(args, "threads", 1)
+    stage = getattr(args, "stage", 3)
     from core.engine.supervisor import ClusterSupervisor
     import asyncio
-    supervisor = ClusterSupervisor(max_threads=threads, headless=args.headless)
+    supervisor = ClusterSupervisor(max_threads=threads, headless=args.headless, stage=stage)
     asyncio.run(supervisor.run())
 
 
@@ -180,17 +191,18 @@ def main():
     p_shop = subparsers.add_parser("shop", help="Real-time shopping rank query")
     p_shop.add_argument("--keyword", "-k", required=True, help="Search keyword")
     p_shop.add_argument("--target", "-t", default=None, help="Target product nvMid or channelProductId")
-    p_shop.add_argument("--maxpage", "-m", type=int, default=5, help="Max pages (default: 5 / 200 ranks)")
+    p_shop.add_argument("--stage", "-S", type=int, default=2, choices=[2, 3], help="Crawl stage (2: PC 1~200위, 3: Phone Farm 1~1000위)")
+    p_shop.add_argument("--maxpage", "-m", type=int, default=25, help="Max pages (default: 25 / 1000 ranks)")
     p_shop.add_argument("--headless", action="store_true", help="Run browser in headless mode")
 
     # 2. Worker Command (TechB Task Queue Client)
     p_worker = subparsers.add_parser("worker", help="TechB Distributed Task Queue Multi-Worker")
-    p_worker.add_argument("--threads", "-T", type=int, default=4, help="Number of concurrent worker threads (default: 4, up to 8)")
+    p_worker.add_argument("--threads", "-T", type=int, default=1, help="Number of concurrent worker threads (default: 1, up to 20)")
+    p_worker.add_argument("--stage", "-S", type=int, default=3, choices=[2, 3], help="Crawl stage (2: PC worker=pc 1~200위, 3: Phone Farm worker=mobile 1~1000위)")
     p_worker.add_argument("--service", "-s", default="shop", choices=["shop", "place"], help="Target service queue")
     p_worker.add_argument("--server", default=None, help=f"Task queue server URL (default: {TASK_QUEUE_SERVER})")
     p_worker.add_argument("--interval", "-i", type=int, default=5, help="Polling interval in seconds (default: 5)")
-    p_worker.add_argument("--lease", "-l", type=int, default=300, help="Lease lock seconds (default: 300)")
-    p_worker.add_argument("--maxpage", "-m", type=int, default=5, help="Max search pages (default: 5 / 200 ranks)")
+    p_worker.add_argument("--maxpage", "-m", type=int, default=25, help="Max search pages (default: 25 / 1000 ranks)")
     p_worker.add_argument("--headless", action="store_true", help="Run browser in headless mode")
 
     # 3. Place Command

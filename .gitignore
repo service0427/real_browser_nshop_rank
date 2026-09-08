@@ -30,3 +30,8 @@ services/runtime/*.json
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# Credentials & Output
+Authorize/
+output/
+

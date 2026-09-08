@@ -27,10 +27,11 @@ logger = get_logger("engine.supervisor")
 class ClusterSupervisor:
     """고성능 N-Thread 크롤러 오케스트레이터 및 리소스 슈퍼바이저"""
 
-    def __init__(self, max_threads: int = 4, headless: bool = False, idle_sleep_sec: int = 600):
-        self.max_threads = max(1, min(max_threads, 16))
+    def __init__(self, max_threads: int = 4, headless: bool = False, idle_sleep_sec: int = 600, stage: int = 3):
+        self.max_threads = max(1, min(max_threads, 20))
         self.headless = headless
         self.idle_sleep_sec = idle_sleep_sec  # 빈 큐 10분(600초) 유휴 대기
+        self.stage = stage
         
         self.results: List[Dict[str, Any]] = []
         self.worker_stats: Dict[int, Dict[str, Any]] = {
@@ -48,6 +49,7 @@ class ClusterSupervisor:
         # 서킷 브레이커 10분 자동 쿨다운 제어
         self.cooldown_sec = 600
         self.in_cooldown = False
+        self.consecutive_blocks = 0
         self.cooldown_event = asyncio.Event()
         self.cooldown_event.set()
 
@@ -115,10 +117,12 @@ class ClusterSupervisor:
                 "recent_tasks": self.results[-15:]
             }
 
-            status_file = os.path.join(self.log_dir, "drain_status.json")
+            status_file = os.path.join(self.log_dir, f"drain_status_stage{self.stage}.json")
             try:
                 with open(status_file, "w", encoding="utf-8") as f:
                     json.dump(status_data, f, indent=2, ensure_ascii=False)
+                import shutil
+                shutil.copyfile(status_file, os.path.join(self.log_dir, "drain_status.json"))
             except Exception as e:
                 logger.error(f"상태 파일 저장 실패: {e}")
 
@@ -126,9 +130,12 @@ class ClusterSupervisor:
         """개별 워커 루프"""
         port = 9200 + worker_id
         start_idx = (worker_id * 100) + 1
-        pool_mgr = ProfilePoolManager(worker_id=worker_id, start_id=start_idx, count=50)
+        pool_mgr = ProfilePoolManager(worker_id=worker_id, start_id=start_idx, count=50) if self.stage == 2 else None
 
-        logger.info(f"🚀 [Worker #{worker_id}] 가동 준비 완료 | Port: {port} | 프로필: profile_{start_idx}~{start_idx+49}")
+        if self.stage == 3:
+            logger.info(f"📱 [Worker #{worker_id}] 폰팜 전용 워커 가동 준비 완료 | CDP Base: {9300 + worker_id}")
+        else:
+            logger.info(f"🚀 [Worker #{worker_id}] PC 크롬 워커 가동 준비 완료 | Port: {port} | 프로필: profile_{start_idx}~{start_idx+49}")
 
         while self.is_running:
             # 쿨다운 중일 경우 대기
@@ -141,7 +148,8 @@ class ClusterSupervisor:
                 in_flight_keywords=self.in_flight_keywords,
                 lock=self.lock,
                 headless=self.headless,
-                active_workers=self.max_threads
+                active_workers=self.max_threads,
+                default_stage=self.stage
             )
 
             # 빈 큐인 경우
@@ -182,20 +190,27 @@ class ClusterSupervisor:
 
             # 콘솔 로그 출력
             status_icon = "🟢 성공" if res["is_success"] else "🔴 차단"
-            rank_str = f"#{res['rank']}위" if res.get("rank") else ("0위(밖)" if res.get("target_found") is False and res["is_success"] else "N/A")
+            rank_str = f"#{res['rank']}위" if (res.get("rank") and res.get("rank") != 1001) else ("#1001위(순위없음)" if res.get("rank") == 1001 else "N/A")
             cache_tag = " [⚡캐시]" if res.get("cache_hit") else ""
             logger.info(f"   ✔ [W{worker_id} | #{task_num:03d}] {status_icon}{cache_tag} | 키워드: '{res['keyword']}' | 순위: {rank_str} | 프로필: {res.get('used_profile')} | 소요: {res.get('elapsed_sec')}초")
 
             # 상태 JSON 갱신
             await self.write_status()
 
-            # [안전 가드] 모든 워커가 동시에 차단(BLOCKED) 상태인지 검사 -> 10분 쿨다운 자동 진입
+            # 네이버 실제 418 차단인 경우에만 서킷 브레이커 카운트 증가
+            is_real_418 = (res.get("status") == 418 or "418" in str(res.get("error", "")))
+            if is_real_418:
+                self.consecutive_blocks += 1
+            else:
+                self.consecutive_blocks = 0
+
+            # [안전 가드] 연속 3회 이상 418 차단 시 10분 쿨다운 자동 진입
             async with self.lock:
-                active_statuses = list(self.worker_last_status.values())
-                if len(active_statuses) >= self.max_threads and all(s == "BLOCKED" for s in active_statuses):
+                if self.consecutive_blocks >= 3:
                     if not self.in_cooldown:
                         self.in_cooldown = True
                         self.cooldown_event.clear()
+                        self.consecutive_blocks = 0
                         asyncio.create_task(self.trigger_circuit_breaker_cooldown())
 
             await asyncio.sleep(0.5)
@@ -209,7 +224,12 @@ class ClusterSupervisor:
         logger.info(f"• 10분 유휴 대기: {self.idle_sleep_sec}초 설정")
         logger.info("=" * 80)
 
-        tasks = [asyncio.create_task(self.worker_loop(w)) for w in range(1, self.max_threads + 1)]
+        tasks = []
+        for w in range(1, self.max_threads + 1):
+            tasks.append(asyncio.create_task(self.worker_loop(w)))
+            if w < self.max_threads:
+                logger.info(f"⏳ [워커 분산 기동] W{w} 시작 완료, 다음 워커 W{w+1} 시작 전 2.5초 대기...")
+                await asyncio.sleep(2.5)
         try:
             await asyncio.gather(*tasks)
         except asyncio.CancelledError:
@@ -220,12 +240,13 @@ class ClusterSupervisor:
 
 def main():
     parser = argparse.ArgumentParser(description="TechB 8-Thread Multi-Worker Supervisor")
-    parser.add_argument("--threads", type=int, default=4, help="동시 실행 쓰레드 수 (1~8)")
+    parser.add_argument("--threads", type=int, default=1, help="동시 실행 쓰레드 수 (1~8)")
+    parser.add_argument("--stage", "-S", type=int, default=3, choices=[2, 3], help="크롤링 단계 (2: PC, 3: Phone Farm)")
     parser.add_argument("--headless", action="store_true", help="헤드리스 모드로 실행")
     parser.add_argument("--idle-sleep", type=int, default=600, help="빈 큐 유휴 대기 시간(초)")
     args = parser.parse_args()
 
-    supervisor = ClusterSupervisor(max_threads=args.threads, headless=args.headless, idle_sleep_sec=args.idle_sleep)
+    supervisor = ClusterSupervisor(max_threads=args.threads, headless=args.headless, idle_sleep_sec=args.idle_sleep, stage=args.stage)
 
     def sig_handler(sig, frame):
         logger.info("🛑 [종료 신호 수신] 워커 클러스터를 안전하게 종료합니다...")

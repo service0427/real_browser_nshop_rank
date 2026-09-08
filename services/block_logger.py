@@ -87,3 +87,59 @@ class Block418Logger:
             )
         except Exception as e:
             logger.error(f"[Block418Logger] 파일 저장 실패: {e}")
+
+    @classmethod
+    def record_abnormal(
+        cls,
+        event_type: str,
+        keyword: str,
+        target_id: str = "",
+        page: int = 1,
+        worker: str = "mobile",
+        device_or_profile: str = "",
+        error_message: str = "",
+        elapsed_sec: float = 0.0
+    ):
+        """
+        418 차단, 타임아웃, 페이징 실패 등 모든 비정상 상태를 전용 로그 파일에 일자별로 영구 누적
+        """
+        now = datetime.now()
+        timestamp_str = now.strftime("%Y-%m-%d %H:%M:%S")
+        today_str = now.strftime("%Y-%m-%d")
+
+        os.makedirs(LOGS_DIR, exist_ok=True)
+        txt_path = os.path.join(LOGS_DIR, f"abnormal_history_{today_str}.log")
+        jsonl_path = os.path.join(LOGS_DIR, f"abnormal_history_{today_str}.jsonl")
+
+        event_data: Dict[str, Any] = {
+            "timestamp": timestamp_str,
+            "epoch": time.time(),
+            "event_type": event_type,
+            "worker": worker,
+            "keyword": keyword,
+            "target_id": target_id,
+            "page": page,
+            "device_or_profile": device_or_profile,
+            "error_message": error_message,
+            "elapsed_sec": elapsed_sec
+        }
+
+        log_line = (
+            f"[{timestamp_str}] [{event_type}] "
+            f"워커: {worker} | 기기/프로필: {device_or_profile} | 키워드: '{keyword}' | 타겟: '{target_id}' | "
+            f"발생페이지: {page}p | 사유: {error_message} | 소요: {elapsed_sec}s\n"
+        )
+
+        try:
+            with open(txt_path, "a", encoding="utf-8") as f:
+                f.write(log_line)
+            with open(jsonl_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(event_data, ensure_ascii=False) + "\n")
+
+            logger.warning(
+                f"🚨 [비정상 상태 기록] {event_type} | '{keyword}' ({page}p, {worker}/{device_or_profile}) "
+                f"-> 패스(Requeue) 처리 및 로그 기록 완료: {txt_path}"
+            )
+        except Exception as e:
+            logger.error(f"[Block418Logger] 비정상 로그 파일 저장 실패: {e}")
+

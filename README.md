@@ -141,20 +141,22 @@ python3 main.py shop --keyword "무선이어폰" --maxpage 25
 워커 클러스터는 중앙 작업 큐 서버(`114.207.112.172:9003`)와 아래 규격으로 통신합니다.
 
 ### 1. 작업 임대 요청 (`GET /api/v1/task`)
-- **URL**: `GET http://114.207.112.172:9003/api/v1/task?service=shop&lease_seconds=300`
+- **PC 워커 (Stage 2)**: `GET http://114.207.112.172:9003/api/v1/task?service=shop&worker=pc`
+- **모바일/폰팜 워커 (Stage 3)**: `GET http://114.207.112.172:9003/api/v1/task?service=shop&worker=mobile`
 - **응답 예시**:
 ```json
 {
   "success": true,
   "has_task": true,
-  "task_id": 60637641,
+  "task_id": 63780010,
   "service": "shop",
-  "keyword": "분리수거함",
-  "keyword_total_count": 3,
-  "keyword_remaining_count": 3,
-  "total_remaining_tasks": 3463,
-  "target": "83198421590",
-  "naver_search_url": "https://m.search.shopping.naver.com/search/all?query=분리수거함"
+  "worker": "pc",
+  "keyword": "주방칼",
+  "keyword_total_count": 1,
+  "keyword_remaining_count": 1,
+  "total_remaining_tasks": 1380,
+  "target": "83899924492",
+  "naver_search_url": "https://m.search.shopping.naver.com/search/all?query=주방칼"
 }
 ```
 
