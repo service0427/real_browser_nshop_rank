@@ -16,6 +16,23 @@ from core.logger import get_logger
 logger = get_logger("phone_farm.device_manager")
 
 
+def get_excluded_devices() -> set:
+    """제외/스킵할 기기 시리얼 목록 로드 (환경변수 EXCLUDED_DEVICES 또는 config/excluded_devices.txt)"""
+    excluded = set(filter(None, [s.strip() for s in os.getenv("EXCLUDED_DEVICES", "").split(",")]))
+    cfg_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "config")
+    cfg_path = os.path.join(cfg_dir, "excluded_devices.txt")
+    if os.path.exists(cfg_path):
+        try:
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.split("#")[0].strip()
+                    if line:
+                        excluded.add(line)
+        except Exception:
+            pass
+    return excluded
+
+
 class PhoneDevice:
     """단일 폰팜 디바이스 인스턴스"""
 
@@ -54,11 +71,12 @@ class PhoneDeviceManager:
         self.scan_devices()
 
     def scan_devices(self) -> List[Dict[str, Any]]:
-        """ADB를 통해 현재 연결된 모든 실기기(USB/TCP) 스캔"""
+        """ADB를 통해 현재 연결된 모든 실기기(USB/TCP) 스캔 (제외 목록 자동 필터링)"""
         try:
             res = subprocess.run(["adb", "devices", "-l"], capture_output=True, text=True, timeout=5)
             lines = res.stdout.strip().splitlines()
             current_serials = set()
+            excluded_serials = get_excluded_devices()
 
             for line in lines[1:]:
                 line = line.strip()
@@ -67,6 +85,9 @@ class PhoneDeviceManager:
                 parts = line.split()
                 if len(parts) >= 2 and parts[1] == "device":
                     serial = parts[0]
+                    if serial in excluded_serials:
+                        logger.debug(f"폰팜 기기 제외(블랙리스트): {serial}")
+                        continue
                     current_serials.add(serial)
                     model = ""
                     for p in parts[2:]:
@@ -119,7 +140,10 @@ class PhoneDeviceManager:
             async with self.lock:
                 self.scan_devices()
                 idle_devices = [d for d in self.devices.values() if not d.in_use]
+                excluded_serials = get_excluded_devices()
                 for d in idle_devices:
+                    if d.serial in excluded_serials:
+                        continue
                     if self.ensure_device_wifi(d.serial):
                         device = d
                         device.in_use = True
@@ -143,6 +167,10 @@ class PhoneDeviceManager:
         subprocess.run(["adb", "-s", device.serial, "shell", "settings", "put", "system", "accelerometer_rotation", "0"], capture_output=True)
         subprocess.run(["adb", "-s", device.serial, "shell", "settings", "put", "system", "user_rotation", "0"], capture_output=True)
 
+        # 0-1. 시스템 및 크롬 한글 로케일 강제 설정 (영문 UI / 네이버 로그인 유도 방지)
+        subprocess.run(["adb", "-s", device.serial, "shell", "settings", "put", "system", "system_locales", "ko-KR,en-US"], capture_output=True)
+        subprocess.run(["adb", "-s", device.serial, "shell", "cmd", "locale", "set-app-locales", "com.android.chrome", "--locales", "ko-KR,ko"], capture_output=True)
+
         # 1. 폰에 크롬 브라우저 전면 포그라운드 활성화 (새 탭 생성 없이 포그라운드 전환)
         subprocess.run(["adb", "-s", device.serial, "shell", "am", "start", "-n", "com.android.chrome/com.google.android.apps.chrome.Main"], capture_output=True)
         await asyncio.sleep(0.5)
@@ -150,7 +178,7 @@ class PhoneDeviceManager:
         # 2. Chrome DevTools 원격 디버깅 소켓 포트 포워딩
         self._bind_cdp_port(device)
 
-        # 3. 백그라운드 누적 탭 정리 (기기 메모리 고갈 방지: 최대 1~2개 활성 탭 유지)
+        # 3. 백그라운드 누적 탭 정리 (기기 메모리 고갈 방지: 최대 1~2개 활성 탭 유지 및 로그인창 탭 자동 종료)
         self.cleanup_device_tabs(device.cdp_port)
 
         logger.info(f"✔ [폰팜 기기 할당 완료] {device.serial} -> CDP Port: {device.cdp_port}")
@@ -167,11 +195,21 @@ class PhoneDeviceManager:
         subprocess.run(["adb", "-s", device.serial, "forward", f"tcp:{device.cdp_port}", f"localabstract:{sock_name}"], capture_output=True)
 
     def cleanup_device_tabs(self, port: Optional[int]):
-        """백그라운드 누적 탭 정리 (최대 1~2개 활성 탭 유지)"""
+        """백그라운드 누적 탭 정리 (최대 1~2개 활성 탭 유지 및 로그인창 탭 자동 종료)"""
         if not port:
             return
         try:
             tabs_data = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{port}/json", timeout=1.0).read())
+            # 1. 로그인 페이지(nid.naver.com / nidlogin) 탭 자동 정리
+            for t in tabs_data:
+                url = t.get("url", "")
+                if ("nid.naver.com" in url or "nidlogin" in url) and t.get("id"):
+                    try:
+                        req = urllib.request.Request(f"http://127.0.0.1:{port}/json/close/{t.get('id')}")
+                        urllib.request.urlopen(req, timeout=0.5)
+                    except Exception:
+                        pass
+            # 2. 초과 탭 정리 (최대 1~2개 활성 탭 유지)
             if len(tabs_data) > 3:
                 keep_id = tabs_data[0].get("id")
                 for t in tabs_data[1:]:

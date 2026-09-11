@@ -133,6 +133,14 @@ async def crawl_phone_rank_async(
             page = new_page
             await page.bring_to_front()
 
+            # 한글 Accept-Language 헤더 강제 주입 (영문 UI / 네이버 로그인 유도 방지)
+            try:
+                await page.set_extra_http_headers({
+                    "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7"
+                })
+            except Exception:
+                pass
+
             # 크롬 크래시("앗, 이런!") 감지 및 자동 새로고침 복구
             try:
                 crash_check = await page.evaluate("() => document.body ? document.body.innerText : ''")
@@ -219,6 +227,14 @@ async def crawl_phone_rank_async(
             api_response_event.clear()
             await DOMNavigator.navigate_to_search(page, keyword)
 
+            # 네이버 로그인 화면 감지 시 쇼핑 검색 직접 우회 진입
+            if "nidlogin" in page.url or "nid.naver.com" in page.url:
+                logger.warning(f"🚨 [폰팜 {device.serial}] 네이버 로그인 창(nidlogin) 감지 -> 쇼핑 검색(msearch) 직접 재진입")
+                encoded_kw = urllib.parse.quote(keyword)
+                direct_url = f"https://msearch.shopping.naver.com/search/all?query={encoded_kw}"
+                await page.goto(direct_url, wait_until="domcontentloaded", timeout=15000)
+                await asyncio.sleep(2.0)
+
             # 1페이지 API 응답 수신 대기 (도착 즉시 0.001초만에 wakeup, 최대 4.0초 대기)
             try:
                 await asyncio.wait_for(api_response_event.wait(), timeout=4.0)
@@ -280,6 +296,7 @@ async def crawl_phone_rank_async(
                 for cur_p in range(2, max_pages + 1):
                     page_change_success = False
                     new_items = []
+                    fresh_count = 0
 
                     # 페이지당 최대 2회 시도 (1차 실패 시 JS 강제 디스패치 재시도)
                     for attempt in range(1, 3):
