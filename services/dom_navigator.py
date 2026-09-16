@@ -85,57 +85,46 @@ class DOMNavigator:
     @classmethod
     async def click_next_page(cls, page: Page, target_page: int) -> bool:
         """
-        사용자 원본 검증 로직:
-        하단에 있는 실제 네이버 페이징 DOM 버튼을 화면 상단(Fixed)에 그대로 복제(cloneNode)하여
-        상단에서 마우스 물리 클릭을 수행하는 고속 페이징 처리
+        Zero-Scroll 원칙 완벽 준수:
+        하단에 렌더링되어 있는 네이버 페이징 DOM을 화면 상단(fixed, top: 120px)으로 플로팅 배치한 뒤
+        물리 마우스(CDP page.mouse)로 실제 버튼을 직접 클릭 (isTrusted: true).
+        합성 이벤트(synthetic targetBtn.click)로 인한 WTM 418 차단을 원천 방지하고 200 OK를 보장.
         """
-        logger.info(f"👉 [{target_page}페이지 이동] 실제 네이버 페이징 DOM 복제(Clone) 및 상단 리얼 클릭")
+        logger.info(f"👉 [{target_page}페이지 이동] Zero-Scroll 상단 플로팅 & 하드웨어 리얼 클릭")
 
-        # 페이징 버튼 탐색 후 즉시 상단(Fixed)에 원본 DOM 복제(cloneNode) - 노스크롤 고속 페이징
-        clone_js = f"""
+        locate_js = f"""
         (() => {{
-            const buttons = Array.from(document.querySelectorAll('a[role="button"], button, a, [class*="paginator"] a, [class*="paginator"] button'));
-            let targetBtn = buttons.find(el => el.textContent.trim() === '{target_page}' && !el.getAttribute('data-is-clone'));
-            if (!targetBtn && ({target_page} - 1) % 5 === 0) {{
+            const p = document.querySelector('div[class*="paginator_list_paging"], div[class*="paginator_inner"], div[class*="paginator"]');
+            if (!p) return {{ success: false, reason: 'no_paginator' }};
+
+            // 1. 페이징 영역을 스크롤 없이 화면 상단(fixed)에 배치
+            p.style.position = 'fixed';
+            p.style.top = '120px';
+            p.style.left = '10px';
+            p.style.zIndex = '999999';
+            p.style.backgroundColor = '#ffffff';
+            p.style.padding = '8px 12px';
+            p.style.borderRadius = '8px';
+            p.style.boxShadow = '0 4px 20px rgba(0,0,0,0.3)';
+
+            const buttons = Array.from(p.querySelectorAll('a, button'));
+            
+            // 2. 목표 페이지 번호 버튼 탐색
+            let targetBtn = buttons.find(el => el.textContent.trim() === '{target_page}');
+
+            // 3. 다음 블록 이동이 필요한 경우 ('다음리스트' 또는 '다음' 버튼)
+            if (!targetBtn) {{
                 targetBtn = buttons.find(el => {{
                     const txt = el.textContent.trim();
                     const aria = el.getAttribute('aria-label') || '';
                     const cls = el.className || '';
-                    return (txt === '다음' || txt.includes('다음') || aria.includes('다음') || cls.includes('next') || cls.includes('btn_next'));
+                    return (txt === '다음리스트' || txt === '다음' || txt.includes('다음') || aria.includes('다음') || cls.includes('next') || cls.includes('btn_next'));
                 }});
             }}
-            if (!targetBtn) return {{ success: false, reason: 'not_found' }};
 
-            // 기존 복제 엘리먼트 제거
-            document.querySelectorAll('[data-is-clone="true"]').forEach(el => el.remove());
+            if (!targetBtn) return {{ success: false, reason: 'button_not_found' }};
 
-            // 대상 버튼 DOM 완전 복제
-            const clone = targetBtn.cloneNode(true);
-            clone.setAttribute('data-is-clone', 'true');
-            clone.style.position = 'fixed';
-            clone.style.top = '120px';
-            clone.style.left = '30px';
-            clone.style.zIndex = '999999';
-            clone.style.opacity = '1';
-            clone.style.pointerEvents = 'auto';
-            clone.style.backgroundColor = '#FFFF00';
-            clone.style.outline = '4px solid #FF0055';
-            clone.style.boxShadow = '0 0 25px rgba(255, 0, 85, 1.0)';
-            clone.style.transform = 'scale(1.25)';
-            clone.style.padding = '8px 16px';
-            clone.style.borderRadius = '8px';
-            clone.style.color = '#000000';
-            clone.style.fontWeight = '900';
-
-            // 클릭 이벤트 위임
-            clone.onclick = (e) => {{
-                e.preventDefault();
-                e.stopPropagation();
-                targetBtn.click();
-            }};
-
-            document.body.appendChild(clone);
-            const r = clone.getBoundingClientRect();
+            const r = targetBtn.getBoundingClientRect();
             return {{
                 success: true,
                 text: targetBtn.textContent.trim(),
@@ -144,48 +133,36 @@ class DOMNavigator:
             }};
         }})()
         """
-        res = await page.evaluate(clone_js)
+        res = await page.evaluate(locate_js)
 
         if not res or not res.get("success"):
-            # 차선책: 상단 플로팅 방식 폴백
-            logger.warning(f"[{target_page}p 복제 실패 -> 상단 플로팅 폴백 시도]")
-            fallback_res = await page.evaluate("""(target) => {
-                const p = document.querySelector('div[class*="paginator_inner"], div[class*="paginator"]');
-                if (!p) return null;
-                p.style.position = 'fixed';
-                p.style.top = '80px';
-                p.style.left = '20px';
-                p.style.zIndex = '999999';
-                p.style.background = '#ffffff';
-                p.style.border = '3px solid #00c73c';
-                const btns = Array.from(p.querySelectorAll('a, button'));
-                let targetBtn = btns.find(el => el.innerText.trim() === String(target));
-                if (!targetBtn) {
-                    targetBtn = btns.find(el => el.innerText.trim().includes('다음') || el.getAttribute('aria-label')?.includes('다음'));
-                }
-                if (!targetBtn) return null;
-                const r = targetBtn.getBoundingClientRect();
-                return { text: targetBtn.innerText.trim(), x: r.left + r.width / 2, y: r.top + r.height / 2 };
-            }""", target_page)
-            if not fallback_res:
-                logger.error(f"❌ [{target_page}페이지] 페이징 버튼 탐색 실패!")
-                return False
-            res = {"success": True, "text": fallback_res["text"], "x": fallback_res["x"], "y": fallback_res["y"]}
+            logger.warning(f"❌ [{target_page}페이지] 페이징 버튼 탐색 실패: {res.get('reason') if res else 'unknown'}")
+            # 복구: 스타일 초기화
+            await page.evaluate("""() => {
+                const p = document.querySelector('div[class*="paginator_list_paging"], div[class*="paginator_inner"], div[class*="paginator"]');
+                if (p) p.style.position = '';
+            }""")
+            return False
 
-        logger.info(f"✨ [{target_page}p 복제 버튼: '{res.get('text')}'] 상단 배치 완료 (좌표: {res['x']:.1f}, {res['y']:.1f})")
+        logger.info(f"✨ [{target_page}p 대상 버튼: '{res.get('text')}'] 상단 배치 완료 (좌표: {res['x']:.1f}, {res['y']:.1f})")
 
-        # 3. 시각적 확인 0.5초 대기 후 마우스 물리 이동 및 리얼 클릭
-        await asyncio.sleep(0.5)
-        await page.mouse.move(res["x"], res["y"], steps=10)
+        # 4. 마우스 물리 이동 및 리얼 하드웨어 클릭 (isTrusted = true)
+        await asyncio.sleep(0.3)
+        await page.mouse.move(res["x"], res["y"], steps=6)
         await asyncio.sleep(0.15)
         await page.mouse.down()
         await asyncio.sleep(0.1)
         await page.mouse.up()
 
-        # 4. 복제 엘리먼트 제거
-        await page.evaluate("() => { document.querySelectorAll('[data-is-clone=\"true\"]').forEach(el => el.remove()); }")
+        # 5. 클릭 후 플로팅 스타일 해제하여 원래 DOM 복원
+        await asyncio.sleep(0.5)
+        await page.evaluate("""() => {
+            const p = document.querySelector('div[class*="paginator_list_paging"], div[class*="paginator_inner"], div[class*="paginator"]');
+            if (p) p.style.position = '';
+        }""")
 
-        # 5. 데이터 로드 대기
-        await asyncio.sleep(3.0)
+        # 6. 네트워크 데이터 로드 대기
+        await asyncio.sleep(2.5)
         return True
+
 

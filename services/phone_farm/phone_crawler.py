@@ -133,6 +133,27 @@ async def crawl_phone_rank_async(
             page = new_page
             await page.bring_to_front()
 
+            # 프로필 정보 초기화 (세션/쿠키/사이트 스토리지 완전 클리어 - 418 차단 방지)
+            cdp_session = None
+            try:
+                await context.clear_cookies()
+                cdp_session = await context.new_cdp_session(page)
+                origins = [
+                    "https://msearch.shopping.naver.com",
+                    "https://m.search.naver.com",
+                    "https://search.shopping.naver.com",
+                    "https://shopping.naver.com",
+                    "https://nid.naver.com",
+                    "https://naver.com"
+                ]
+                for o in origins:
+                    try:
+                        await cdp_session.send("Storage.clearDataForOrigin", {"origin": o, "storageTypes": "all"})
+                    except Exception:
+                        pass
+            except Exception as e:
+                logger.debug(f"[폰팜 {device.serial}] 프로필 초기화 알림: {e}")
+
             # 한글 Accept-Language 헤더 강제 주입 (영문 UI / 네이버 로그인 유도 방지)
             try:
                 await page.set_extra_http_headers({
@@ -153,7 +174,8 @@ async def crawl_phone_rank_async(
 
             # CDP Target.activateTarget으로 안드로이드 화면에 탭 전면 활성화
             try:
-                cdp_session = await context.new_cdp_session(page)
+                if not cdp_session:
+                    cdp_session = await context.new_cdp_session(page)
                 target_info = await cdp_session.send("Target.getTargetInfo")
                 if target_info and target_info.get("targetInfo", {}).get("targetId"):
                     await cdp_session.send("Target.activateTarget", {"targetId": target_info["targetInfo"]["targetId"]})
@@ -162,11 +184,13 @@ async def crawl_phone_rank_async(
 
             api_response_event = asyncio.Event()
             detected_429 = [False]
+            detected_418 = [False]
 
             # 네트워크 JSON 인터셉터 (수신 즉시 이벤트 트리거 및 HTTP 429 감지)
             async def on_response(res):
                 url = res.url
                 if res.status == 418:
+                    detected_418[0] = True
                     logger.warning(f"🚨 [폰팜 {device.serial}] HTTP 418 차단 감지 ({url})")
                     Block418Logger.record_abnormal(
                         event_type="418_BLOCKED",
@@ -319,6 +343,18 @@ async def crawl_phone_rank_async(
                             ok = await handle_429_retry(cur_p)
                             if not ok:
                                 break
+
+                        # 페이징 중 418 차단 감지 시 즉시 세션/스토리지 정리
+                        if detected_418[0]:
+                            logger.warning(f"🚨 [폰팜 {device.serial}] {cur_p}p에서 418 차단 감지 -> 세션 스토리지 즉각 초기화")
+                            try:
+                                await context.clear_cookies()
+                                if cdp_session:
+                                    for o in ["https://msearch.shopping.naver.com", "https://m.search.naver.com"]:
+                                        await cdp_session.send("Storage.clearDataForOrigin", {"origin": o, "storageTypes": "all"})
+                            except Exception:
+                                pass
+                            detected_418[0] = False
 
                         # 1. API / _next/data JSON 인터셉트 검증
                         if captured_jsons:
