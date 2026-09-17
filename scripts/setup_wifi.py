@@ -86,6 +86,39 @@ def check_wifi_connection(serial: str, target_ssid: str) -> Tuple[bool, str, boo
     return is_connected, ip_addr, has_internet
 
 
+def connect_device_suggestion_method(serial: str, ssid: str, password: str) -> bool:
+    """[Android 10+ 표준/OneUI] cmd wifi add-suggestion 및 구 네트워크 정리"""
+    sec_type = "wpa2" if password else "open"
+    # 1. 새 네트워크 suggestion 등록
+    cmd_args = ["shell", "cmd", "wifi", "add-suggestion", ssid, sec_type]
+    if password:
+        cmd_args.append(password)
+    run_adb(serial, cmd_args, timeout=5.0)
+
+    # 2. 다른 기존 네트워크 forget 처리 (이전 공유기로의 회귀 차단)
+    _, list_net, _ = run_adb(serial, ["shell", "cmd", "wifi", "list-networks"], timeout=5.0)
+    for line in list_net.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[0].isdigit():
+            net_id = parts[0]
+            cur_net_ssid = parts[1]
+            if cur_net_ssid != ssid:
+                run_adb(serial, ["shell", "cmd", "wifi", "forget-network", net_id], timeout=3.0)
+
+    # 3. 스캔 트리거 및 연결 유도
+    run_adb(serial, ["shell", "cmd", "wifi", "start-scan"], timeout=3.0)
+    time.sleep(3.0)
+    is_conn, _, _ = check_wifi_connection(serial, ssid)
+    if not is_conn:
+        # Wi-Fi 토글로 강제 재연결 유도
+        run_adb(serial, ["shell", "svc", "wifi", "disable"], timeout=3.0)
+        time.sleep(1.0)
+        run_adb(serial, ["shell", "svc", "wifi", "enable"], timeout=3.0)
+        time.sleep(4.0)
+        is_conn, _, _ = check_wifi_connection(serial, ssid)
+    return is_conn
+
+
 def connect_device_root_method(serial: str, ssid: str, password: str) -> bool:
     """[루팅폰 전용] su 권한을 이용한 빠른 백그라운드 Wi-Fi 연결"""
     # 1. su 지원 여부 확인
@@ -222,16 +255,21 @@ def setup_single_device(device: Dict[str, str], ssid: str, password: str, force:
                 "msg": "이미 정상 연결됨"
             }
 
-    # 2. [1차 시도] 루팅폰 root(su) 직결 시도
-    method_used = "ROOT_SU"
-    success = connect_device_root_method(serial, ssid, password)
+    # 2. [1차 시도] cmd wifi suggestion & forget (순정/루팅 공통 초고속 백그라운드)
+    method_used = "CMD_WIFI_SUGGESTION"
+    success = connect_device_suggestion_method(serial, ssid, password)
 
-    # 3. [2차 시도] 실패 시 UI Automator 자동 화면 제어 시도
+    # 3. [2차 시도] 실패 시 루팅폰 root(su) 직결 시도
+    if not success:
+        method_used = "ROOT_SU"
+        success = connect_device_root_method(serial, ssid, password)
+
+    # 4. [3차 시도] 실패 시 UI Automator 자동 화면 제어 시도
     if not success:
         method_used = "UI_AUTOMATOR"
         connect_device_ui_method(serial, ssid, password)
 
-    # 4. 최종 연결 검증
+    # 5. 최종 연결 검증
     time.sleep(3.0)
     is_conn, ip, ok = check_wifi_connection(serial, ssid)
 
@@ -248,9 +286,9 @@ def setup_single_device(device: Dict[str, str], ssid: str, password: str, force:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="TechB 안드로이드 실기기(루팅폰) Wi-Fi 일괄 설정 도구")
-    parser.add_argument("--ssid", "-s", required=True, help="연결할 Wi-Fi SSID (이름)")
-    parser.add_argument("--password", "-p", default="", help="Wi-Fi 비밀번호 (공개 Wi-Fi는 빈칸)")
+    parser = argparse.ArgumentParser(description="TechB 안드로이드 실기기 Wi-Fi 일괄 설정 도구")
+    parser.add_argument("--ssid", "-s", default="tech_mik", help="연결할 Wi-Fi SSID (기본: tech_mik)")
+    parser.add_argument("--password", "-p", default="13241324", help="Wi-Fi 비밀번호 (기본: 13241324)")
     parser.add_argument("--force", "-f", action="store_true", help="이미 연결된 기기도 강제 재연결")
     parser.add_argument("--concurrency", "-c", type=int, default=10, help="동시 설정 쓰레드 수 (기본: 10)")
     args = parser.parse_args()

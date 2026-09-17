@@ -98,11 +98,14 @@ fi
 # ------------------------------------------------------------------------------
 # 📶 [Wi-Fi 검증 및 실행]
 # ------------------------------------------------------------------------------
+WIFI_SSID="${WIFI_SSID:-tech_mik}"
+WIFI_PW="${WIFI_PW:-13241324}"
+
 if [ "$STAGE" == "dual" ]; then
     echo "================================================================================"
-    echo "📶 [Wi-Fi 검증] 실기기 Tech_5G / 13241324 연결 상태 확인 및 자동 연결..."
+    echo "📶 [Wi-Fi 검증] 실기기 ${WIFI_SSID} / ${WIFI_PW} 연결 상태 확인 및 자동 연결..."
     echo "================================================================================"
-    "$PYTHON_BIN" "$SCRIPT_DIR/scripts/setup_wifi.py" --ssid "Tech_5G" --password "13241324" || true
+    "$PYTHON_BIN" "$SCRIPT_DIR/scripts/setup_wifi.py" --ssid "$WIFI_SSID" --password "$WIFI_PW" || true
 
     echo "================================================================================"
     echo "🚀 [TechB Crawler] Dual Mode Starting (PC: ${PC_THREADS}개, Mobile: ${MOBILE_THREADS}개)"
@@ -117,9 +120,9 @@ if [ "$STAGE" == "dual" ]; then
     exec "$PYTHON_BIN" main.py worker --threads "$MOBILE_THREADS" --stage 3
 elif [ "$STAGE" -eq 3 ]; then
     echo "================================================================================"
-    echo "📶 [Wi-Fi 검증] 실기기 Tech_5G / 13241324 연결 상태 확인 및 자동 연결 수행..."
+    echo "📶 [Wi-Fi 검증] 실기기 ${WIFI_SSID} / ${WIFI_PW} 연결 상태 확인 및 자동 연결 수행..."
     echo "================================================================================"
-    "$PYTHON_BIN" "$SCRIPT_DIR/scripts/setup_wifi.py" --ssid "Tech_5G" --password "13241324" || true
+    "$PYTHON_BIN" "$SCRIPT_DIR/scripts/setup_wifi.py" --ssid "$WIFI_SSID" --password "$WIFI_PW" || true
 
     echo "================================================================================"
     echo "🚀 [TechB Crawler] Multi-Worker Starting (Threads: $THREADS, Stage: $STAGE, Display: $DISPLAY)"

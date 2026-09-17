@@ -121,9 +121,10 @@ class PhoneDeviceManager:
         if p_res.returncode == 0:
             return True
 
-        # svc wifi enable 한 번 시도
+        # svc wifi enable 한 번 시도 및 tech_mik Wi-Fi 자동 보장
         subprocess.run(["adb", "-s", serial, "shell", "svc", "wifi", "enable"], capture_output=True)
-        time.sleep(1.0)
+        subprocess.run(["adb", "-s", serial, "shell", "cmd", "wifi", "add-suggestion", "tech_mik", "wpa2", "13241324"], capture_output=True)
+        time.sleep(1.5)
         p_res = subprocess.run(["adb", "-s", serial, "shell", "ping", "-c", "1", "-W", "1", "8.8.8.8"], capture_output=True)
         if p_res.returncode == 0:
             return True
